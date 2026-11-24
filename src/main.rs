@@ -16,7 +16,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,10 +25,11 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, ClientToScreen, CreateBitmap,
-    CreateFontW, CreateRoundRectRgn, CreateSolidBrush, DEFAULT_CHARSET,
-    DEFAULT_PITCH, DT_CENTER, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_TOP, DT_VCENTER,
+    CreateFontW, CreateRoundRectRgn, DEFAULT_CHARSET,
+    DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_EDITCONTROL, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_TOP, DT_VCENTER,
     DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD,
-    HDC, InvalidateRect, OUT_DEFAULT_PRECIS, PAINTSTRUCT, SelectObject, SetBkColor,
+    HDC, IntersectClipRect, InvalidateRect, OUT_DEFAULT_PRECIS, PAINTSTRUCT, SelectClipRgn,
+    SelectObject,
     SetBkMode, SetTextColor, SetWindowRgn, TRANSPARENT,
 };
 use windows_sys::Win32::Graphics::Gdi::{
@@ -40,8 +41,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
 use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 use windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringW;
-use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
-use windows_sys::Win32::UI::Controls::SetWindowTheme;
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
 };
@@ -62,21 +62,20 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW,
-    CreateIconIndirect, DefWindowProcW, DestroyIcon, DestroyMenu, DispatchMessageW, ES_AUTOVSCROLL,
-    ES_MULTILINE, ES_NOHIDESEL, ES_READONLY, GetCursorPos, GetForegroundWindow, GetMessageW,
+    CreateIconIndirect, DefWindowProcW, DestroyIcon, DestroyMenu, DispatchMessageW,
+    GetCursorPos, GetForegroundWindow, GetMessageW,
     GetSystemMetrics, GetWindowRect, HICON, HWND_TOPMOST, ICONINFO, IDC_ARROW, IDI_APPLICATION,
     IsWindow, IsWindowVisible, KillTimer, LoadCursorW, LoadIconW, LWA_ALPHA, MB_ICONERROR,
     MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MESSAGEBOX_STYLE, MF_CHECKED, MF_GRAYED,
     HMENU, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW,
     PostMessageW, PostQuitMessage, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW,
-    SW_SHOWNA, SWP_NOACTIVATE, SWP_NOSIZE, SendMessageW, SetForegroundWindow,
-    SetLayeredWindowAttributes, SetTimer, SetWindowPos, SetWindowTextW, ShowWindow, TPM_RIGHTBUTTON,
+    SW_SHOWNA, SWP_NOACTIVATE, SWP_NOSIZE, SetForegroundWindow,
+    SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, TPM_RIGHTBUTTON,
     TrackPopupMenu, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WM_APP, WM_COMMAND, WM_CREATE,
-    WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_LBUTTONDOWN,
-    WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SETFONT, WM_SYSKEYDOWN,
+    WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_LBUTTONDOWN,
+    WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN,
     WM_TIMER, WM_USER, WNDCLASSW,
-    WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
-    WM_THEMECHANGED, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use winreg::RegKey;
 use winreg::enums::HKEY_CURRENT_USER;
@@ -121,18 +120,26 @@ const SETTINGS_TABS: [&str; 3] = ["History", "Model", "Settings"];
 const TAB_HISTORY: usize = 0;
 const TAB_MODEL: usize = 1;
 const TAB_SETTINGS: usize = 2;
-const HISTORY_EDIT_ID: usize = 3001;
-// History tab
-const HISTORY_BUTTONS_TOP: i32 = 134;
-// The history list (an EDIT control) spans the card's width, inset 4 px so it
-// stays clear of the rounded corners; its text keeps the 40 px content margin.
-const HISTORY_PANEL_LEFT: i32 = SETTINGS_CARD_LEFT + 4;
-const HISTORY_PANEL_WIDTH: i32 = SETTINGS_WIDTH - 2 * HISTORY_PANEL_LEFT;
-const HISTORY_PANEL_TOP: i32 = 202;
-const HISTORY_PANEL_HEIGHT: i32 = SETTINGS_HEIGHT - HISTORY_PANEL_TOP - SETTINGS_FOOTER_H - 16;
-const HISTORY_TEXT_MARGIN_LEFT: i32 = SETTINGS_INNER_LEFT - HISTORY_PANEL_LEFT;
-// One flat colour for the History card and the list, so the list has no visible edge.
-const HISTORY_BG: (u8, u8, u8) = (28, 31, 39);
+// History tab: a title row with the trash button, then the custom-drawn,
+// scrollable list of entries (copy icon + grey header line + text each).
+const HISTORY_TITLE_TOP: i32 = SETTINGS_CARD_TOP + 14;
+const HISTORY_LIST_TOP: i32 = SETTINGS_CARD_TOP + 52;
+const HISTORY_LIST_BOTTOM: i32 = SETTINGS_HEIGHT - SETTINGS_FOOTER_H - 12;
+// Text column (the scrollbar sits in the 12 px to the right of it).
+const HISTORY_TEXT_LEFT: i32 = SETTINGS_INNER_LEFT;
+const HISTORY_TEXT_RIGHT: i32 = SETTINGS_INNER_RIGHT - 8;
+const HISTORY_HEADER_H: i32 = 16;
+const HISTORY_ENTRY_GAP: i32 = 14;
+// Pixels scrolled per mouse-wheel notch.
+const HISTORY_WHEEL_STEP: i32 = 60;
+// Timer that turns a copy icon's checkmark back into the copy icon.
+const COPY_FLASH_TIMER_ID: usize = 78;
+const COPY_FLASH_MS: u32 = 1200;
+// Windows icon-font glyphs (Segoe MDL2 Assets / Segoe Fluent Icons).
+const GLYPH_CLOSE: &str = "\u{E8BB}";
+const GLYPH_COPY: &str = "\u{E8C8}";
+const GLYPH_CHECK: &str = "\u{E73E}";
+const GLYPH_TRASH: &str = "\u{E74D}";
 // Model tab: Processing, Speech model, Language, Preload (top to bottom)
 const COMPUTE_SECTION_TOP: i32 = 132;
 const MODEL_SECTION_TOP: i32 = 230;
@@ -177,7 +184,8 @@ static UI_FONT: OnceCell<isize> = OnceCell::new();
 static TITLE_FONT: OnceCell<isize> = OnceCell::new();
 static SMALL_FONT: OnceCell<isize> = OnceCell::new();
 static ICON_FONT: OnceCell<isize> = OnceCell::new();
-static EDIT_BG_BRUSH: OnceCell<isize> = OnceCell::new();
+static ICON_FONT_LARGE: OnceCell<isize> = OnceCell::new();
+static TINY_FONT: OnceCell<isize> = OnceCell::new();
 // The currently-installed tray HICON. Animated icons are swapped in via NIM_MODIFY
 // and the previous one destroyed, so this tracks what needs cleanup.
 static CURRENT_TRAY_ICON: AtomicIsize = AtomicIsize::new(0);
@@ -532,7 +540,13 @@ struct AppState {
     hwnd: AtomicIsize,
     target_hwnd: AtomicIsize,
     settings_hwnd: AtomicIsize,
-    history_edit_hwnd: AtomicIsize,
+    /// History list: scroll offset and total content height (px), the clickable
+    /// copy icons of the last paint (rect, history index), and the entry whose
+    /// icon currently shows the "copied" checkmark.
+    history_scroll: AtomicI32,
+    history_content_h: AtomicI32,
+    history_hits: Mutex<Vec<(RectI, usize)>>,
+    copied_flash: Mutex<Option<usize>>,
     capturing_hotkey: AtomicBool,
     /// Active tab of the settings window (TAB_HISTORY / TAB_MODEL / TAB_SETTINGS).
     settings_tab: AtomicUsize,
@@ -643,7 +657,10 @@ fn run_app() -> Result<()> {
         hwnd: AtomicIsize::new(0),
         target_hwnd: AtomicIsize::new(0),
         settings_hwnd: AtomicIsize::new(0),
-        history_edit_hwnd: AtomicIsize::new(0),
+        history_scroll: AtomicI32::new(0),
+        history_content_h: AtomicI32::new(0),
+        history_hits: Mutex::new(Vec::new()),
+        copied_flash: Mutex::new(None),
         capturing_hotkey: AtomicBool::new(false),
         settings_tab: AtomicUsize::new(TAB_HISTORY),
         enter_pending: AtomicBool::new(false),
@@ -1262,7 +1279,57 @@ fn add_history(app: &Arc<AppState>, text: String, stats: Option<DictationStats>)
     history.truncate(limit);
     save_history(&history);
     drop(history);
-    update_history_edit(app);
+    refresh_history_view(app);
+}
+
+/// After the history changed: scroll back to the newest entry and repaint the
+/// settings window (posted, so this is safe from the engine thread too).
+fn refresh_history_view(app: &Arc<AppState>) {
+    app.history_scroll.store(0, Ordering::SeqCst);
+    *app.copied_flash.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    unsafe {
+        let hwnd = settings_hwnd_from_app(app);
+        if hwnd != null_mut() {
+            PostMessageW(hwnd, WM_UI_UPDATE, 0, 0);
+        }
+    }
+}
+
+/// Copy one history entry to the clipboard and flash its icon as a checkmark.
+fn copy_history_item(app: &Arc<AppState>, index: usize) {
+    let Some(item) = history_snapshot(app).get(index).cloned() else {
+        return;
+    };
+    let hwnd = settings_hwnd_from_app(app);
+    match set_clipboard_text(&item.text, hwnd) {
+        Ok(()) => {
+            *app.copied_flash.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(index);
+            unsafe {
+                if hwnd != null_mut() {
+                    SetTimer(hwnd, COPY_FLASH_TIMER_ID, COPY_FLASH_MS, None);
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+        }
+        Err(err) => log_error(&format!("Copying a history entry failed: {err:#}")),
+    }
+}
+
+/// Scroll the history list by `delta` pixels (positive = further down).
+fn scroll_history(app: &Arc<AppState>, delta: i32) {
+    let view_h = HISTORY_LIST_BOTTOM - HISTORY_LIST_TOP;
+    let max = (app.history_content_h.load(Ordering::SeqCst) - view_h).max(0);
+    let old = app.history_scroll.load(Ordering::SeqCst);
+    let new = (old + delta).clamp(0, max);
+    if new != old {
+        app.history_scroll.store(new, Ordering::SeqCst);
+        unsafe {
+            let hwnd = settings_hwnd_from_app(app);
+            if hwnd != null_mut() {
+                InvalidateRect(hwnd, null(), 0);
+            }
+        }
+    }
 }
 
 fn clear_history(app: &Arc<AppState>) {
@@ -1277,88 +1344,7 @@ fn clear_history(app: &Arc<AppState>) {
     update_ui(app, |ui| {
         ui.status = "History cleared.".to_string();
     });
-    update_history_edit(app);
-}
-
-unsafe fn create_history_edit(parent: HWND, app: &Arc<AppState>) {
-    let class = wide_null("EDIT");
-    let edit = CreateWindowExW(
-        0,
-        class.as_ptr(),
-        wide_null("").as_ptr(),
-        WS_CHILD
-            | WS_VISIBLE
-            | WS_TABSTOP
-            | WS_VSCROLL
-            | (ES_MULTILINE as u32)
-            | (ES_READONLY as u32)
-            | (ES_AUTOVSCROLL as u32)
-            | (ES_NOHIDESEL as u32),
-        HISTORY_PANEL_LEFT,
-        HISTORY_PANEL_TOP,
-        HISTORY_PANEL_WIDTH,
-        HISTORY_PANEL_HEIGHT,
-        parent,
-        HISTORY_EDIT_ID as _,
-        GetModuleHandleW(null()),
-        null_mut(),
-    );
-    if edit != null_mut() {
-        app.history_edit_hwnd.store(edit as isize, Ordering::SeqCst);
-        SendMessageW(edit, WM_SETFONT, ui_font() as usize, 1);
-        // Inner margins: the text lines up with the buttons above the list.
-        const EM_SETMARGINS: u32 = 0x00D3;
-        const EC_LEFTMARGIN: usize = 0x1;
-        const EC_RIGHTMARGIN: usize = 0x2;
-        let margins = (HISTORY_TEXT_MARGIN_LEFT as u16 as isize) | ((8u16 as isize) << 16);
-        SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, margins);
-        apply_dark_scrollbar(edit);
-        update_history_edit(app);
-    }
-}
-
-/// Give a control the modern flat dark scrollbar (the thin overlay used by dark-mode
-/// Explorer) instead of the chunky classic Win32 scrollbar with arrow buttons.
-/// Uses the documented SetWindowTheme plus the undocumented (but stable since Win10
-/// 1903) uxtheme dark-mode ordinals; every call is best-effort.
-unsafe fn apply_dark_scrollbar(hwnd: HWND) {
-    let uxtheme = LoadLibraryW(wide_null("uxtheme.dll").as_ptr());
-    if uxtheme != null_mut() {
-        // SetPreferredAppMode(AllowDark = 1) — ordinal 135
-        if let Some(proc) = GetProcAddress(uxtheme, 135 as *const u8) {
-            let set_preferred_app_mode: unsafe extern "system" fn(i32) -> i32 =
-                std::mem::transmute(proc);
-            set_preferred_app_mode(1);
-        }
-        // AllowDarkModeForWindow(hwnd, true) — ordinal 133
-        if let Some(proc) = GetProcAddress(uxtheme, 133 as *const u8) {
-            let allow_dark_mode_for_window: unsafe extern "system" fn(HWND, i32) -> i32 =
-                std::mem::transmute(proc);
-            allow_dark_mode_for_window(hwnd, 1);
-        }
-    }
-    SetWindowTheme(hwnd, wide_null("DarkMode_Explorer").as_ptr(), null());
-    SendMessageW(hwnd, WM_THEMECHANGED, 0, 0);
-}
-
-fn update_history_edit(app: &Arc<AppState>) {
-    let hwnd = history_edit_hwnd_from_app(app);
-    if hwnd == null_mut() {
-        return;
-    }
-    let text = history_snapshot(app)
-        .iter()
-        .map(|item| format!("{}\r\n{}\r\n", item.header(), item.text.trim()))
-        .collect::<Vec<_>>()
-        .join("\r\n");
-    unsafe {
-        let wide = wide_null(if text.is_empty() {
-            "No dictations yet."
-        } else {
-            &text
-        });
-        SetWindowTextW(hwnd, wide.as_ptr());
-    }
+    refresh_history_view(app);
 }
 
 fn settings_path() -> PathBuf {
@@ -1509,7 +1495,6 @@ unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
             .store(settings_hwnd as isize, Ordering::SeqCst);
         place_settings_window(settings_hwnd, SettingsOrigin::Tray); // re-placed whenever shown
         apply_settings_rounding(settings_hwnd);
-        create_history_edit(settings_hwnd, &app);
         ShowWindow(settings_hwnd, SW_HIDE);
     }
 
@@ -1625,6 +1610,23 @@ unsafe extern "system" fn wnd_proc(
         WM_TIMER => {
             if wparam == ANIM_TIMER_ID {
                 on_anim_tick(hwnd);
+            } else if wparam == COPY_FLASH_TIMER_ID {
+                // the "copied" checkmark has been shown long enough
+                KillTimer(hwnd, COPY_FLASH_TIMER_ID);
+                if let Some(app) = APP.get() {
+                    *app.copied_flash.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                }
+                InvalidateRect(hwnd, null(), 0);
+            }
+            0
+        }
+        WM_MOUSEWHEEL => {
+            if let Some(app) = APP.get() {
+                if is_settings_window(hwnd) && app.settings_tab.load(Ordering::SeqCst) == TAB_HISTORY {
+                    // high word of wparam: signed wheel delta, 120 per notch
+                    let delta = ((wparam >> 16) & 0xFFFF) as u16 as i16 as i32;
+                    scroll_history(app, -delta * HISTORY_WHEEL_STEP / 120);
+                }
             }
             0
         }
@@ -1635,12 +1637,6 @@ unsafe extern "system" fn wnd_proc(
                 render_bubble(hwnd);
             }
             0
-        }
-        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
-            let hdc = wparam as HDC;
-            SetTextColor(hdc, rgb(225, 230, 238));
-            SetBkColor(hdc, rgb(HISTORY_BG.0, HISTORY_BG.1, HISTORY_BG.2));
-            edit_bg_brush() as isize
         }
         WM_DESTROY => {
             if let Some(app) = APP.get() {
@@ -3152,18 +3148,20 @@ fn handle_settings_click(x: i32, y: i32) {
 }
 
 fn handle_history_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
-    if settings_copy_latest_rect().contains(x, y) {
-        if let Some(item) = history_snapshot(app).first() {
-            let _ = set_clipboard_text(&item.text, settings_hwnd_from_app(app));
-            update_ui(app, |ui| {
-                ui.status = "Latest history item copied.".to_string();
-            });
-        }
-        return;
-    }
-
     if settings_clear_history_rect().contains(x, y) {
         clear_history(app);
+        return;
+    }
+    // Copy icons, as laid out by the last paint (they move with scrolling).
+    let hit = app
+        .history_hits
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .find(|(rect, _)| rect.contains(x, y))
+        .map(|(_, index)| *index);
+    if let Some(index) = hit {
+        copy_history_item(app, index);
     }
 }
 
@@ -3782,26 +3780,81 @@ unsafe fn paint_settings(hwnd: HWND) {
     let capturing = app.capturing_hotkey.load(Ordering::SeqCst);
     let model_status = lock_ui(app).model_status.clone();
     if let Some(mut canvas) = Canvas::new(SETTINGS_WIDTH, SETTINGS_HEIGHT) {
-        // history = None: the live EDIT control paints the recent-dictations panel.
         let tab = app.settings_tab.load(Ordering::SeqCst);
-        render_settings_canvas(&mut canvas, &settings, &model_status, None, capturing, tab);
+        let items = history_snapshot(app);
+        let view = HistoryView {
+            items: &items,
+            scroll: app.history_scroll.load(Ordering::SeqCst),
+            copied: *app.copied_flash.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
+        };
+        let layout = render_settings_canvas(&mut canvas, &settings, &model_status, &view, capturing, tab);
         canvas.blit_to(hdc);
+        // Remember what the list looked like, for clicks and wheel scrolling.
+        app.history_content_h.store(layout.content_h, Ordering::SeqCst);
+        if layout.scroll != view.scroll {
+            app.history_scroll.store(layout.scroll, Ordering::SeqCst);
+        }
+        *app.history_hits.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = layout.hits;
     }
     EndPaint(hwnd, &ps);
 }
 
+/// What the History tab shows: the entries, how far the list is scrolled, and
+/// which entry's copy icon currently shows the "copied" checkmark.
+struct HistoryView<'a> {
+    items: &'a [HistoryItem],
+    scroll: i32,
+    copied: Option<usize>,
+}
+
+/// The History list as painted: copy-icon hit areas (rect, entry index), the
+/// total content height and the scroll offset actually used (clamped).
+#[derive(Default)]
+struct HistoryLayout {
+    hits: Vec<(RectI, usize)>,
+    content_h: i32,
+    scroll: i32,
+}
+
+/// Vertical layout of the history entries in list coordinates (0 = top of the
+/// list content): (entry top, wrapped text height), plus the total height.
+unsafe fn measure_history(dc: HDC, items: &[HistoryItem]) -> (Vec<(i32, i32)>, i32) {
+    SelectObject(dc, ui_font() as _);
+    let mut entries = Vec::with_capacity(items.len());
+    let mut y = 0;
+    for item in items {
+        let mut rect = RECT {
+            left: HISTORY_TEXT_LEFT,
+            top: 0,
+            right: HISTORY_TEXT_RIGHT,
+            bottom: 0,
+        };
+        let wide = wide_null(item.text.trim());
+        DrawTextW(
+            dc,
+            wide.as_ptr(),
+            -1,
+            &mut rect,
+            DT_CALCRECT | DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX,
+        );
+        let text_h = (rect.bottom - rect.top).max(19);
+        entries.push((y, text_h));
+        y += HISTORY_HEADER_H + 2 + text_h + HISTORY_ENTRY_GAP;
+    }
+    (entries, (y - HISTORY_ENTRY_GAP).max(0))
+}
+
 /// Render the entire settings surface into a canvas: header, tab bar and the card
-/// of the active `tab` with its switches, buttons and ClearType text. When
-/// `history` is Some, the recent-dictations list (normally the live EDIT control)
-/// is drawn too — used by the asset exporter.
+/// of the active `tab` with its switches, buttons and ClearType text. Returns the
+/// layout of the History list (copy-icon hit areas, content height).
 unsafe fn render_settings_canvas(
     canvas: &mut Canvas,
     settings: &AppSettings,
     model_status: &str,
-    history: Option<&[HistoryItem]>,
+    history: &HistoryView,
     capturing: bool,
     tab: usize,
-) {
+) -> HistoryLayout {
     let rows = setting_rows(settings);
     let cw = canvas.w;
     let ch = canvas.h;
@@ -3809,10 +3862,20 @@ unsafe fn render_settings_canvas(
     let card_top = SETTINGS_CARD_TOP as f32;
     let card_w = (cw - 2 * SETTINGS_CARD_LEFT) as f32;
     let card_h = (ch - SETTINGS_CARD_TOP - SETTINGS_FOOTER_H) as f32;
-    let inner_w = SETTINGS_INNER_RIGHT - SETTINGS_INNER_LEFT;
 
-    // history list region (matches create_history_edit)
-    let (ex, ey, ew, eh) = (HISTORY_PANEL_LEFT, HISTORY_PANEL_TOP, HISTORY_PANEL_WIDTH, HISTORY_PANEL_HEIGHT);
+    // History list geometry: measure first (needs the DC), then draw.
+    let view_h = HISTORY_LIST_BOTTOM - HISTORY_LIST_TOP;
+    let (entries, content_h) = if tab == TAB_HISTORY {
+        measure_history(canvas.hdc, history.items)
+    } else {
+        (Vec::new(), 0)
+    };
+    let scroll = history.scroll.clamp(0, (content_h - view_h).max(0));
+    let mut layout = HistoryLayout {
+        hits: Vec::new(),
+        content_h,
+        scroll,
+    };
 
     // -------- pass 1: anti-aliased shapes straight into the pixel buffer --------
     {
@@ -3828,23 +3891,22 @@ unsafe fn render_settings_canvas(
         let underline_x = (active.left + active.right) as f32 / 2.0 - underline_w / 2.0;
         fill_round_rect(buf, cw, ch, underline_x, base_y - 3.0, underline_w, 3.0, 1.5, (110, 162, 255), (84, 138, 250), 1.0);
 
-        // the card of the active tab; flat on History so the list blends in
-        let (card_top_color, card_bottom_color) = if tab == TAB_HISTORY {
-            (HISTORY_BG, HISTORY_BG)
-        } else {
-            ((30, 33, 41), (25, 28, 35))
-        };
-        fill_round_rect(buf, cw, ch, card_left, card_top, card_w, card_h, 16.0, card_top_color, card_bottom_color, 1.0);
+        // the card of the active tab
+        fill_round_rect(buf, cw, ch, card_left, card_top, card_w, card_h, 16.0, (30, 33, 41), (25, 28, 35), 1.0);
 
         match tab {
             TAB_HISTORY => {
-                draw_button_bg(buf, cw, ch, settings_copy_latest_rect(), true);
                 draw_button_bg(buf, cw, ch, settings_clear_history_rect(), false);
-                if history.is_some() {
-                    // a thin modern scrollbar (mirrors the live look)
-                    let sb_x = (ex + ew - 8) as f32;
-                    fill_round_rect(buf, cw, ch, sb_x, (ey + 8) as f32, 4.0, (eh - 16) as f32, 2.0, (45, 50, 61), (45, 50, 61), 1.0);
-                    fill_round_rect(buf, cw, ch, sb_x, (ey + 12) as f32, 4.0, eh as f32 * 0.4, 2.0, (92, 100, 116), (92, 100, 116), 1.0);
+                // thin scrollbar, only when the list is longer than the view
+                if content_h > view_h {
+                    let track_x = (SETTINGS_INNER_RIGHT + 4) as f32;
+                    let track_top = HISTORY_LIST_TOP as f32;
+                    let track_h = view_h as f32;
+                    let thumb_h = (track_h * view_h as f32 / content_h as f32).max(24.0);
+                    let thumb_top = track_top
+                        + (track_h - thumb_h) * scroll as f32 / (content_h - view_h) as f32;
+                    fill_round_rect(buf, cw, ch, track_x, track_top, 4.0, track_h, 2.0, (40, 44, 54), (40, 44, 54), 1.0);
+                    fill_round_rect(buf, cw, ch, track_x, thumb_top, 4.0, thumb_h, 2.0, (92, 100, 116), (92, 100, 116), 1.0);
                 }
             }
             TAB_MODEL => {
@@ -3877,14 +3939,10 @@ unsafe fn render_settings_canvas(
     SetTextColor(dc, rgb(237, 241, 247));
     text_left(dc, "Nemotron Bubble", 42, 22, cw - 110, 34);
 
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(140, 150, 164));
-    text_left(dc, "Settings & recent dictations", 42, 54, cw - 110, 20);
-
     // close: the ChromeClose glyph of the Windows icon font, like a title bar's X
     SelectObject(dc, icon_font() as _);
     SetTextColor(dc, rgb(205, 212, 224));
-    text_center(dc, "\u{E8BB}", settings_close_rect());
+    text_center(dc, GLYPH_CLOSE, settings_close_rect());
 
     // tab labels
     SelectObject(dc, ui_font() as _);
@@ -3900,50 +3958,71 @@ unsafe fn render_settings_canvas(
 
     match tab {
         TAB_HISTORY => {
+            // title row: "Recent dictations" left, trash button right
             SelectObject(dc, ui_font() as _);
-            SetTextColor(dc, rgb(245, 248, 252));
-            text_center(dc, "Copy Latest", settings_copy_latest_rect());
+            SetTextColor(dc, rgb(233, 238, 244));
+            text_left(dc, "Recent dictations", SETTINGS_INNER_LEFT, HISTORY_TITLE_TOP, 220, 20);
+            SelectObject(dc, icon_font_large() as _);
             SetTextColor(dc, rgb(214, 220, 230));
-            text_center(dc, "Clear", settings_clear_history_rect());
+            text_center(dc, GLYPH_TRASH, settings_clear_history_rect());
 
-            SetTextColor(dc, rgb(126, 136, 150));
-            text_left(
-                dc,
-                "Select a line and copy with Ctrl+C.",
-                SETTINGS_INNER_LEFT,
-                HISTORY_BUTTONS_TOP + 44,
-                inner_w,
-                18,
-            );
-
-            if let Some(items) = history {
-                let mut y = ey + 4;
-                let bottom = ey + eh - 12;
-                let text_x = ex + HISTORY_TEXT_MARGIN_LEFT;
-                let text_w = ew - HISTORY_TEXT_MARGIN_LEFT - 24;
-                for item in items {
-                    if y > bottom - 16 {
-                        break;
-                    }
-                    SelectObject(dc, small_font() as _);
-                    SetTextColor(dc, rgb(140, 152, 170));
-                    text_left(dc, &item.header(), text_x, y, text_w, 16);
-                    y += 18;
-                    SelectObject(dc, ui_font() as _);
-                    SetTextColor(dc, rgb(216, 223, 233));
-                    let lines = (item.text.chars().count() / 32 + 1).min(3) as i32;
-                    let h = lines * 19;
-                    let mut r = RECT {
-                        left: text_x,
-                        top: y,
-                        right: text_x + text_w,
-                        bottom: (y + h).min(bottom),
-                    };
-                    let wide = wide_null(&item.text);
-                    DrawTextW(dc, wide.as_ptr(), -1, &mut r, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
-                    y += h + 12;
-                }
+            if history.items.is_empty() {
+                SelectObject(dc, small_font() as _);
+                SetTextColor(dc, rgb(126, 136, 150));
+                text_left(dc, "No dictations yet.", HISTORY_TEXT_LEFT, HISTORY_LIST_TOP, 260, 18);
             }
+
+            // entries, clipped to the list area and shifted by the scroll offset
+            IntersectClipRect(dc, SETTINGS_CARD_LEFT, HISTORY_LIST_TOP, SETTINGS_INNER_RIGHT, HISTORY_LIST_BOTTOM);
+            let text_w = HISTORY_TEXT_RIGHT - HISTORY_TEXT_LEFT;
+            for (index, (item, (top, text_h))) in history.items.iter().zip(&entries).enumerate() {
+                let y = HISTORY_LIST_TOP + top - scroll;
+                if y + HISTORY_HEADER_H + 2 + text_h < HISTORY_LIST_TOP || y > HISTORY_LIST_BOTTOM {
+                    continue;
+                }
+
+                // header: copy icon (checkmark right after copying), then the grey info line
+                let icon = RectI {
+                    left: HISTORY_TEXT_LEFT - 3,
+                    top: y - 1,
+                    right: HISTORY_TEXT_LEFT + 15,
+                    bottom: y + HISTORY_HEADER_H + 1,
+                };
+                SelectObject(dc, icon_font() as _);
+                if history.copied == Some(index) {
+                    SetTextColor(dc, rgb(110, 200, 140));
+                    text_center(dc, GLYPH_CHECK, icon);
+                } else {
+                    SetTextColor(dc, rgb(150, 160, 176));
+                    text_center(dc, GLYPH_COPY, icon);
+                }
+                // clickable while at least partly visible (the first icon starts 1 px above the list)
+                if icon.bottom > HISTORY_LIST_TOP && icon.top < HISTORY_LIST_BOTTOM {
+                    layout.hits.push((icon, index));
+                }
+                SelectObject(dc, tiny_font() as _);
+                SetTextColor(dc, rgb(126, 136, 150));
+                text_left(dc, &item.header(), HISTORY_TEXT_LEFT + 20, y + 1, text_w - 20, HISTORY_HEADER_H);
+
+                // the dictated text, bright and word-wrapped
+                SelectObject(dc, ui_font() as _);
+                SetTextColor(dc, rgb(226, 231, 239));
+                let mut rect = RECT {
+                    left: HISTORY_TEXT_LEFT,
+                    top: y + HISTORY_HEADER_H + 2,
+                    right: HISTORY_TEXT_RIGHT,
+                    bottom: y + HISTORY_HEADER_H + 2 + text_h,
+                };
+                let wide = wide_null(item.text.trim());
+                DrawTextW(
+                    dc,
+                    wide.as_ptr(),
+                    -1,
+                    &mut rect,
+                    DT_LEFT | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX,
+                );
+            }
+            SelectClipRgn(dc, null_mut());
         }
         TAB_MODEL => {
             // Processing (first: decides how the model is loaded)
@@ -4052,6 +4131,8 @@ unsafe fn render_settings_canvas(
             bottom: ch - SETTINGS_FOOTER_H + 28,
         },
     );
+
+    layout
 }
 
 /// Title and detail line of a Model-tab section (its control sits below them).
@@ -4494,21 +4575,13 @@ fn settings_tab_rect(tab: usize) -> RectI {
     }
 }
 
-fn settings_copy_latest_rect() -> RectI {
-    RectI {
-        left: SETTINGS_INNER_LEFT,
-        top: HISTORY_BUTTONS_TOP,
-        right: SETTINGS_INNER_LEFT + 112,
-        bottom: HISTORY_BUTTONS_TOP + 32,
-    }
-}
-
+/// The trash button at the top right of the History tab (clears the history).
 fn settings_clear_history_rect() -> RectI {
     RectI {
-        left: SETTINGS_INNER_LEFT + 124,
-        top: HISTORY_BUTTONS_TOP,
-        right: SETTINGS_INNER_LEFT + 200,
-        bottom: HISTORY_BUTTONS_TOP + 32,
+        left: SETTINGS_INNER_RIGHT - 32,
+        top: HISTORY_TITLE_TOP - 6,
+        right: SETTINGS_INNER_RIGHT,
+        bottom: HISTORY_TITLE_TOP + 26,
     }
 }
 
@@ -4620,15 +4693,10 @@ fn settings_toggle_rect(id: usize) -> RectI {
     }
 }
 
-/// Switch the settings window to `tab`. The history list is a real EDIT
-/// control, so it is shown only on the History tab.
+/// Switch the settings window to `tab`.
 fn set_settings_tab(app: &Arc<AppState>, tab: usize) {
     app.settings_tab.store(tab, Ordering::SeqCst);
     unsafe {
-        let edit = history_edit_hwnd_from_app(app);
-        if edit != null_mut() {
-            ShowWindow(edit, if tab == TAB_HISTORY { SW_SHOW } else { SW_HIDE });
-        }
         let hwnd = settings_hwnd_from_app(app);
         if hwnd != null_mut() {
             InvalidateRect(hwnd, null(), 0);
@@ -4681,10 +4749,14 @@ fn small_font() -> isize {
     *SMALL_FONT.get_or_init(|| unsafe { create_font(-12, FW_NORMAL as i32) })
 }
 
-fn edit_bg_brush() -> isize {
-    *EDIT_BG_BRUSH.get_or_init(|| unsafe {
-        CreateSolidBrush(rgb(HISTORY_BG.0, HISTORY_BG.1, HISTORY_BG.2)) as isize
-    })
+/// Header lines of history entries (date, device, time per chunk).
+fn tiny_font() -> isize {
+    *TINY_FONT.get_or_init(|| unsafe { create_font(-11, FW_NORMAL as i32) })
+}
+
+/// Larger icon-font glyphs, e.g. the trash bin.
+fn icon_font_large() -> isize {
+    *ICON_FONT_LARGE.get_or_init(|| unsafe { create_font_face("Segoe MDL2 Assets", -15, FW_NORMAL as i32) })
 }
 
 /// Build a 32x32 tray icon. While recording the equalizer bars scale with `level`
@@ -4828,10 +4900,6 @@ fn settings_hwnd_from_app(app: &Arc<AppState>) -> HWND {
     app.settings_hwnd.load(Ordering::SeqCst) as HWND
 }
 
-fn history_edit_hwnd_from_app(app: &Arc<AppState>) -> HWND {
-    app.history_edit_hwnd.load(Ordering::SeqCst) as HWND
-}
-
 // ===========================================================================
 // Asset exporter (feature = "assets")
 //
@@ -4912,12 +4980,17 @@ fn render_assets(out_dir: &str) -> Result<()> {
             (TAB_SETTINGS, "settings-settings.png"),
         ] {
             if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
+                let view = HistoryView {
+                    items: &history,
+                    scroll: 0,
+                    copied: None,
+                };
                 unsafe {
                     render_settings_canvas(
                         &mut canvas,
                         &settings,
                         "Loaded: English · CPU",
-                        Some(&history),
+                        &view,
                         false,
                         tab,
                     )
