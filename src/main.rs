@@ -6,9 +6,11 @@ use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use once_cell::sync::OnceCell;
-use parakeet_rs::{Nemotron, NemotronMode};
+use parakeet_rs::ort::environment::Environment;
+use parakeet_rs::{ExecutionConfig, Nemotron, NemotronMode};
 use core::ffi::c_void;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -22,9 +24,9 @@ use windows_sys::Win32::Foundation::{
     GlobalFree, HGLOBAL, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateBitmap,
+    BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, ClientToScreen, CreateBitmap,
     CreateFontW, CreateRoundRectRgn, CreateSolidBrush, DEFAULT_CHARSET,
-    DEFAULT_PITCH, DT_CENTER, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_TOP, DT_VCENTER,
+    DEFAULT_PITCH, DT_CENTER, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_TOP, DT_VCENTER,
     DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD,
     HDC, InvalidateRect, OUT_DEFAULT_PRECIS, PAINTSTRUCT, SelectObject, SetBkColor,
     SetBkMode, SetTextColor, SetWindowRgn, TRANSPARENT,
@@ -35,6 +37,8 @@ use windows_sys::Win32::Graphics::Gdi::{
     ReleaseDC, SRCCOPY,
 };
 use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
+use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+use windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::UI::Controls::SetWindowTheme;
 use windows_sys::Win32::System::DataExchange::{
@@ -60,7 +64,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, DefWindowProcW, DestroyIcon, DestroyMenu, DispatchMessageW, ES_AUTOVSCROLL,
     ES_MULTILINE, ES_NOHIDESEL, ES_READONLY, GetCursorPos, GetForegroundWindow, GetMessageW,
     GetSystemMetrics, GetWindowRect, HICON, HWND_TOPMOST, ICONINFO, IDC_ARROW, IDI_APPLICATION,
-    IsWindow, IsWindowVisible, KillTimer, LoadCursorW, LoadIconW, LWA_ALPHA, MF_SEPARATOR, MF_STRING, MSG,
+    IsWindow, IsWindowVisible, KillTimer, LoadCursorW, LoadIconW, LWA_ALPHA, MB_ICONERROR,
+    MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MESSAGEBOX_STYLE, MF_CHECKED, MF_GRAYED,
+    HMENU, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW,
     PostMessageW, PostQuitMessage, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW,
     SW_SHOWNA, SWP_NOACTIVATE, SWP_NOSIZE, SendMessageW, SetForegroundWindow,
     SetLayeredWindowAttributes, SetTimer, SetWindowPos, SetWindowTextW, ShowWindow, TPM_RIGHTBUTTON,
@@ -98,8 +104,15 @@ const ANIM_TIMER_ID: usize = 77;
 const ANIM_INTERVAL_MS: u32 = 33; // ~30 fps
 
 const SETTINGS_WIDTH: i32 = 700;
-const SETTINGS_HEIGHT: i32 = 792;
+const SETTINGS_HEIGHT: i32 = 808;
+// Space below the two cards; holds the version label at the bottom left.
+const SETTINGS_FOOTER_H: i32 = 36;
 const HISTORY_EDIT_ID: usize = 3001;
+// Right card layout: the speech-model picker sits at the top, history below it.
+const MODEL_PICKER_TOP: i32 = 160;
+const LANGUAGE_ROW_TOP: i32 = 204;
+const HISTORY_BUTTONS_TOP: i32 = 256;
+const HISTORY_PANEL_TOP: i32 = 324;
 const NEMOTRON_SAMPLE_RATE: f64 = 16_000.0;
 const NEMOTRON_CHUNK_SIZE: usize = 8_960; // 560 ms at 16 kHz.
 
@@ -107,6 +120,12 @@ const IDM_START_STOP: usize = 1001;
 const IDM_SHOW_HIDE: usize = 1002;
 const IDM_CLEAR: usize = 1003;
 const IDM_QUIT: usize = 1004;
+// Tray "Speech model" submenu: one id per ModelChoice, in ModelChoice::ALL order.
+const IDM_MODEL_BASE: usize = 1100;
+// "Language" menus (tray submenu and the settings popup): one id per LANGUAGES entry.
+const IDM_LANG_BASE: usize = 1200;
+/// App version from Cargo.toml; also embedded in the exe's version resource (build.rs).
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SETTINGS_TOGGLE_STARTUP: usize = 2001;
 const SETTINGS_TOGGLE_PRELOAD: usize = 2002;
 const SETTINGS_TOGGLE_LIVE_TYPE: usize = 2003;
@@ -128,10 +147,23 @@ static EDIT_BG_BRUSH: OnceCell<isize> = OnceCell::new();
 // The currently-installed tray HICON. Animated icons are swapped in via NIM_MODIFY
 // and the previous one destroyed, so this tracks what needs cleanup.
 static CURRENT_TRAY_ICON: AtomicIsize = AtomicIsize::new(0);
+// Set by the cpal error callback (e.g. the mic was unplugged or disabled) so the
+// next dictation start reopens the device instead of recording silence.
+static MIC_FAILED: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    // The live microphone stream. cpal streams are not Send, so it lives on the
+    // UI thread (which is also the main thread) and is (re)opened lazily there.
+    static AUDIO_STREAM: RefCell<Option<cpal::Stream>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone, Debug)]
 enum EngineCommand {
     Preload,
+    /// Drop the loaded model (frees its RAM), e.g. after switching models.
+    Unload,
+    /// Set the spoken language of the multilingual model (a LANGUAGES code).
+    SetLanguage(String),
     Start,
     Audio(Vec<f32>),
     Stop,
@@ -157,6 +189,123 @@ struct AppSettings {
     hotkey_vk: u32,
     paste_delay_ms: u64,
     history_limit: usize,
+    /// Which speech model to load (chosen in the settings window). When missing
+    /// from settings.json (first start), it is detected; see `detect_model_choice`.
+    model: ModelChoice,
+    /// Model folder used by the Predefined choice (after NEMOTRON_MODEL_DIR).
+    model_dir: String,
+    /// Spoken language for the multilingual model: a code from LANGUAGES, or
+    /// "auto" to let the model detect it. Ignored by the English-only model.
+    language: String,
+}
+
+/// Languages offered for the multilingual model: "auto" plus NVIDIA's
+/// transcription-ready languages. The codes are parakeet-rs prompt keys
+/// (Japanese and Vietnamese only exist with their region suffix).
+const LANGUAGES: &[(&str, &str)] = &[
+    ("auto", "Auto-detect"),
+    ("ar", "Arabic"),
+    ("nl", "Dutch"),
+    ("en", "English"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("hi", "Hindi"),
+    ("it", "Italian"),
+    ("ja-JP", "Japanese"),
+    ("ko", "Korean"),
+    ("pt", "Portuguese"),
+    ("ru", "Russian"),
+    ("es", "Spanish"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("vi-VN", "Vietnamese"),
+];
+
+/// The canonical code for a saved language value; unknown values become "auto".
+fn normalize_language(code: &str) -> &'static str {
+    LANGUAGES
+        .iter()
+        .find(|(known, _)| known.eq_ignore_ascii_case(code.trim()))
+        .map(|(known, _)| *known)
+        .unwrap_or("auto")
+}
+
+fn language_label(code: &str) -> &'static str {
+    let code = normalize_language(code);
+    LANGUAGES
+        .iter()
+        .find(|(known, _)| *known == code)
+        .map(|(_, label)| *label)
+        .unwrap_or("Auto-detect")
+}
+
+/// Speech model selection. Stored as a plain string in settings.json.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+enum ModelChoice {
+    /// The folder from NEMOTRON_MODEL_DIR, else `model_dir` in settings.json.
+    Predefined,
+    /// `models\nemotron`.
+    #[default]
+    English,
+    /// `models\nemotron_multi`; the model detects the spoken language itself.
+    Multilingual,
+}
+
+impl ModelChoice {
+    /// Display order in the settings switch and the tray submenu.
+    const ALL: [ModelChoice; 3] = [
+        ModelChoice::English,
+        ModelChoice::Multilingual,
+        ModelChoice::Predefined,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            ModelChoice::Predefined => "Predefined",
+            ModelChoice::English => "English",
+            ModelChoice::Multilingual => "Multilingual",
+        }
+    }
+
+    /// The settings.json spelling.
+    fn key(self) -> &'static str {
+        match self {
+            ModelChoice::Predefined => "predefined",
+            ModelChoice::English => "english",
+            ModelChoice::Multilingual => "multilingual",
+        }
+    }
+
+    /// Parse a settings.json value; None for unknown values (e.g. the old "auto").
+    fn parse(value: &str) -> Option<ModelChoice> {
+        ModelChoice::ALL
+            .into_iter()
+            .find(|choice| choice.key().eq_ignore_ascii_case(value.trim()))
+    }
+
+    /// Folder name under `models\` for the standard choices; None for Predefined.
+    fn folder_name(self) -> Option<&'static str> {
+        match self {
+            ModelChoice::Predefined => None,
+            ModelChoice::English => Some("nemotron"),
+            ModelChoice::Multilingual => Some("nemotron_multi"),
+        }
+    }
+}
+
+impl From<String> for ModelChoice {
+    /// Unknown values never invalidate the settings file; `load_settings`
+    /// re-detects the choice for them.
+    fn from(value: String) -> Self {
+        ModelChoice::parse(&value).unwrap_or_default()
+    }
+}
+
+impl From<ModelChoice> for String {
+    fn from(value: ModelChoice) -> Self {
+        value.key().to_string()
+    }
 }
 
 impl Default for AppSettings {
@@ -180,6 +329,9 @@ impl Default for AppSettings {
             hotkey_vk: VK_SPACE as u32,
             paste_delay_ms: 60,
             history_limit: 20,
+            model: ModelChoice::English,
+            model_dir: String::new(),
+            language: "auto".to_string(),
         }
     }
 }
@@ -197,6 +349,8 @@ struct UiState {
     status: String,
     transcript: String,
     model_dir: String,
+    /// Short model state for the settings window, e.g. "Loaded: Multilingual".
+    model_status: String,
     waveform: Vec<f32>,
     current_level: f32,
     last_voice: Instant,
@@ -242,8 +396,48 @@ fn main() -> Result<()> {
     install_crash_logger();
 
     if env::args().any(|arg| arg == "--self-test") {
-        return self_test();
+        // Release builds are GUI-subsystem and have no console; borrow the one we
+        // were started from so the self-test output is visible.
+        unsafe {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+        let result = self_test();
+        match &result {
+            Ok(()) => log_info("Self-test passed."),
+            Err(err) => log_error(&format!("Self-test failed: {err:#}")),
+        }
+        return result;
     }
+
+    match run_app() {
+        Ok(()) => {
+            log_info("Exiting normally.");
+            Ok(())
+        }
+        Err(err) => {
+            let message = format!("{err:#}");
+            log_error(&format!("Fatal: {message}"));
+            show_message_blocking(
+                "Nemotron Bubble could not start",
+                &format!("{message}\n\nLog file: {}", log_path().display()),
+                MB_ICONERROR,
+            );
+            Err(err)
+        }
+    }
+}
+
+fn run_app() -> Result<()> {
+    log_info(&format!(
+        "Starting Nemotron Bubble {} (exe: {}, cwd: {})",
+        env!("CARGO_PKG_VERSION"),
+        env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "?".into()),
+        env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "?".into()),
+    ));
 
     #[cfg(feature = "assets")]
     {
@@ -254,6 +448,13 @@ fn main() -> Result<()> {
                 .cloned()
                 .unwrap_or_else(|| "docs".to_string());
             return render_assets(&out);
+        }
+        if let Some(pos) = args.iter().position(|a| a == "--render-icon") {
+            let out = args
+                .get(pos + 1)
+                .cloned()
+                .unwrap_or_else(|| "assets/nemotron-bubble.ico".to_string());
+            return render_icon(std::path::Path::new(&out));
         }
     }
 
@@ -282,6 +483,7 @@ fn main() -> Result<()> {
             status: "Ready. Press Ctrl+Space to start.".to_string(),
             transcript: "Tap Ctrl+Space to dictate.".to_string(),
             model_dir: String::new(),
+            model_status: "Not loaded yet.".to_string(),
             waveform: vec![0.0; WAVE_BARS],
             current_level: 0.0,
             last_voice: Instant::now(),
@@ -295,7 +497,13 @@ fn main() -> Result<()> {
         move || run_engine(engine_rx, app)
     });
 
-    let _audio_stream = start_audio_capture(app.clone()).context("failed to start microphone")?;
+    // A missing/disabled microphone is not fatal: tell the user, keep running in
+    // the tray, and retry opening the device the next time dictation starts.
+    if !ensure_audio_capture(&app) {
+        update_ui(&app, |ui| {
+            ui.status = "No microphone available. Connect one, then start dictation.".to_string();
+        });
+    }
     if settings_snapshot(&app).preload_model {
         let _ = app.engine_tx.send(EngineCommand::Preload);
     }
@@ -304,7 +512,112 @@ fn main() -> Result<()> {
         run_window(app).context("failed to run window")?;
     }
 
+    AUDIO_STREAM.with(|slot| slot.borrow_mut().take());
     Ok(())
+}
+
+/// Make sure a working microphone stream is open. Returns false (after logging
+/// and notifying the user) when no usable input device is available. Must run on
+/// the main/UI thread, which owns the stream.
+fn ensure_audio_capture(app: &Arc<AppState>) -> bool {
+    let healthy = AUDIO_STREAM.with(|slot| slot.borrow().is_some()) && !MIC_FAILED.load(Ordering::SeqCst);
+    if healthy {
+        return true;
+    }
+    // Drop a stream whose device has gone away before opening a fresh one.
+    AUDIO_STREAM.with(|slot| slot.borrow_mut().take());
+    MIC_FAILED.store(false, Ordering::SeqCst);
+
+    match start_audio_capture(app.clone()) {
+        Ok(stream) => {
+            AUDIO_STREAM.with(|slot| *slot.borrow_mut() = Some(stream));
+            true
+        }
+        Err(err) => {
+            let message = format!("{err:#}");
+            log_error(&format!("Microphone unavailable: {message}"));
+            notify_user(
+                "Nemotron Bubble: no microphone",
+                &format!(
+                    "No usable microphone was found ({message}).\n\n\
+                     Connect or enable a microphone (Windows Settings > System > Sound > Input), \
+                     then press your shortcut again. The app keeps running in the tray.\n\n\
+                     Log file: {}",
+                    log_path().display()
+                ),
+                MB_ICONWARNING,
+            );
+            false
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics: log file + DebugView + user-facing message boxes.
+// ---------------------------------------------------------------------------
+
+fn log_path() -> PathBuf {
+    log_dir().join("nemotron-bubble.log")
+}
+
+const LOG_MAX_BYTES: u64 = 1024 * 1024;
+
+fn log_info(message: &str) {
+    write_log("INFO ", message);
+}
+
+fn log_error(message: &str) {
+    write_log("ERROR", message);
+}
+
+/// Append one line to <exe dir>\log\nemotron-bubble.log (rotated to
+/// .log.old at 1 MB) and mirror it to OutputDebugString so DebugView sees it.
+fn write_log(level: &str, message: &str) {
+    static LOG_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOG_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let line = format!(
+        "[{}] {level} {message}\n",
+        Local::now().format("%Y-%m-%d %H:%M:%S%.3f")
+    );
+
+    let debug = wide_null(&format!("[NemotronBubble] {level} {message}\n"));
+    unsafe {
+        OutputDebugStringW(debug.as_ptr());
+    }
+    #[cfg(debug_assertions)]
+    eprint!("{line}");
+
+    let path = log_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if fs::metadata(&path).map(|m| m.len() > LOG_MAX_BYTES).unwrap_or(false) {
+        let _ = fs::rename(&path, path.with_extension("log.old"));
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+fn show_message_blocking(title: &str, text: &str, icon: MESSAGEBOX_STYLE) {
+    let title = wide_null(title);
+    let text = wide_null(text);
+    unsafe {
+        MessageBoxW(
+            null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | icon | MB_TOPMOST | MB_SETFOREGROUND,
+        );
+    }
+}
+
+/// Show a message box without blocking the caller (UI or engine thread).
+fn notify_user(title: &str, text: &str, icon: MESSAGEBOX_STYLE) {
+    let title = title.to_string();
+    let text = text.to_string();
+    thread::spawn(move || show_message_blocking(&title, &text, icon));
 }
 
 /// Append any panic (message + location, from any thread) to crash.log. The
@@ -319,19 +632,24 @@ fn install_crash_logger() {
             Local::now().format("%Y-%m-%d %H:%M:%S"),
             info
         );
-        let path = app_data_dir().join("crash.log");
+        let path = log_dir().join("crash.log");
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
             let _ = file.write_all(line.as_bytes());
         }
+        write_log("PANIC", &info.to_string());
         default(info);
     }));
 }
 
 fn self_test() -> Result<()> {
-    let (mut model, model_dir) = load_nemotron()?;
+    println!("Loading Nemotron (this can take a while)...");
+    let settings = load_settings();
+    println!("Model choice: {}", settings.model.label());
+    println!("Language (multilingual only): {}", language_label(&settings.language));
+    let (mut model, model_dir) = load_nemotron(&settings)?;
     model.reset();
     let mode = match model.mode() {
         NemotronMode::EnglishOnly => "English-only",
@@ -449,12 +767,171 @@ fn toggle_setting(app: &Arc<AppState>, id: usize) {
     });
 }
 
+/// Switch the speech model: unload the current one (freeing its RAM) and, with
+/// preloading on, load the new one in the background right away.
+fn select_model(app: &Arc<AppState>, choice: ModelChoice) {
+    if app.recording.load(Ordering::SeqCst) {
+        update_ui(app, |ui| {
+            ui.status = "Stop dictation before switching models.".to_string();
+        });
+        return;
+    }
+    if !model_choice_available(&settings_snapshot(app), choice) {
+        update_ui(app, |ui| {
+            ui.status = "Predefined needs NEMOTRON_MODEL_DIR or \"model_dir\" in config\\settings.json \
+                         (restart the app after setting it)."
+                .to_string();
+        });
+        return;
+    }
+    let settings = {
+        let mut settings = app
+            .settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if settings.model == choice {
+            return;
+        }
+        settings.model = choice;
+        settings.clone()
+    };
+    save_settings(&settings);
+    log_info(&format!("Speech model changed to {}", choice.label()));
+
+    let _ = app.engine_tx.send(EngineCommand::Unload);
+    if settings.preload_model {
+        let _ = app.engine_tx.send(EngineCommand::Preload);
+    }
+    update_ui(app, |ui| {
+        ui.status = if settings.preload_model {
+            format!("Switching to {} model...", choice.label())
+        } else {
+            format!("{} model selected. It loads on first dictation.", choice.label())
+        };
+    });
+}
+
+/// The language only matters for the multilingual model, so the Language
+/// controls are greyed out when the English model is selected. (Predefined may
+/// point at either model, so it keeps them enabled.)
+fn language_selectable(settings: &AppSettings) -> bool {
+    settings.model != ModelChoice::English
+}
+
+/// Set the spoken language for the multilingual model. Applied immediately to a
+/// loaded model (no reload) and saved for future loads.
+fn select_language(app: &Arc<AppState>, code: &'static str) {
+    if app.recording.load(Ordering::SeqCst) {
+        update_ui(app, |ui| {
+            ui.status = "Stop dictation before changing the language.".to_string();
+        });
+        return;
+    }
+    let settings = {
+        let mut settings = app
+            .settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !language_selectable(&settings) {
+            drop(settings);
+            update_ui(app, |ui| {
+                ui.status = "The language applies to the multilingual model only.".to_string();
+            });
+            return;
+        }
+        if normalize_language(&settings.language) == code {
+            return;
+        }
+        settings.language = code.to_string();
+        settings.clone()
+    };
+    save_settings(&settings);
+    let _ = app.engine_tx.send(EngineCommand::SetLanguage(code.to_string()));
+    update_ui(app, |ui| {
+        ui.status = format!("Language set to {}.", language_label(code));
+    });
+}
+
+/// Popup menu under the settings window's Language button.
+unsafe fn show_language_menu(app: &Arc<AppState>) {
+    let hwnd = settings_hwnd_from_app(app);
+    let menu = build_language_menu(&settings_snapshot(app), app.recording.load(Ordering::SeqCst));
+    if hwnd == null_mut() || menu == null_mut() {
+        return;
+    }
+    let button = settings_language_rect();
+    let mut point = POINT {
+        x: button.left,
+        y: button.bottom + 2,
+    };
+    ClientToScreen(hwnd, &mut point);
+    SetForegroundWindow(hwnd);
+    // The choice arrives as WM_COMMAND and is handled by handle_command.
+    TrackPopupMenu(menu, 0, point.x, point.y, 0, hwnd, null());
+    DestroyMenu(menu);
+}
+
+/// The Language menu (settings popup and tray submenu): current one checked,
+/// everything greyed out while dictating or with the English model selected.
+unsafe fn build_language_menu(settings: &AppSettings, recording: bool) -> HMENU {
+    let menu = CreatePopupMenu();
+    if menu == null_mut() {
+        return menu;
+    }
+    let current = normalize_language(&settings.language);
+    let enabled = !recording && language_selectable(settings);
+    for (index, (code, label)) in LANGUAGES.iter().enumerate() {
+        let mut flags = MF_STRING;
+        if *code == current {
+            flags |= MF_CHECKED;
+        }
+        if !enabled {
+            flags |= MF_GRAYED;
+        }
+        let text = wide_null(label);
+        // AppendMenuW copies the string, so the buffer may be dropped afterwards.
+        AppendMenuW(menu, flags, IDM_LANG_BASE + index, text.as_ptr());
+        if index == 0 {
+            AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        }
+    }
+    menu
+}
+
 fn load_settings() -> AppSettings {
     let path = settings_path();
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|json| serde_json::from_str::<AppSettings>(&json).ok())
-        .unwrap_or_default()
+    let Ok(json) = fs::read_to_string(&path) else {
+        // First start: no settings yet, so pick the model from what is installed.
+        let mut settings = AppSettings::default();
+        settings.model = detect_model_choice(&settings.model_dir);
+        return settings;
+    };
+    match serde_json::from_str::<AppSettings>(&json) {
+        Ok(mut settings) => {
+            // No (valid) model choice saved yet, e.g. settings from before the
+            // model picker or the old "auto" value: detect it like a first start.
+            let saved = serde_json::from_str::<serde_json::Value>(&json)
+                .ok()
+                .and_then(|value| value.get("model").and_then(|m| m.as_str()).map(str::to_string));
+            if saved.as_deref().and_then(ModelChoice::parse).is_none() {
+                settings.model = detect_model_choice(&settings.model_dir);
+            }
+            settings
+        }
+        Err(err) => {
+            // The file is rewritten with defaults right after this, so keep a copy.
+            let backup = path.with_extension("json.invalid");
+            let _ = fs::copy(&path, &backup);
+            log_error(&format!(
+                "{} is invalid ({err}); using defaults. Old file kept as {}",
+                path.display(),
+                backup.display()
+            ));
+            let mut settings = AppSettings::default();
+            settings.model = detect_model_choice(&settings.model_dir);
+            settings
+        }
+    }
 }
 
 fn save_settings(settings: &AppSettings) {
@@ -540,9 +1017,9 @@ unsafe fn create_history_edit(parent: HWND, app: &Arc<AppState>) {
             | (ES_AUTOVSCROLL as u32)
             | (ES_NOHIDESEL as u32),
         400,
-        182,
+        HISTORY_PANEL_TOP,
         SETTINGS_WIDTH - 436,
-        SETTINGS_HEIGHT - 206,
+        SETTINGS_HEIGHT - HISTORY_PANEL_TOP - SETTINGS_FOOTER_H - 4,
         parent,
         HISTORY_EDIT_ID as _,
         GetModuleHandleW(null()),
@@ -601,22 +1078,35 @@ fn update_history_edit(app: &Arc<AppState>) {
 }
 
 fn settings_path() -> PathBuf {
-    app_data_dir().join("settings.json")
+    config_dir().join("settings.json")
 }
 
 fn history_path() -> PathBuf {
-    app_data_dir().join("history.json")
+    config_dir().join("history.json")
 }
 
-fn app_data_dir() -> PathBuf {
-    env::var_os("APPDATA")
-        .map(PathBuf::from)
+/// The folder containing the exe. The app is portable: everything it writes
+/// lives below this folder. Deliberately NOT the working directory — "Start with
+/// Windows" launches us with the working directory set to System32.
+fn app_root_dir() -> PathBuf {
+    env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(PathBuf::from))
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-        .join("NemotronBubble")
+}
+
+/// Settings, history and generated sound cues: `<exe dir>\config`.
+fn config_dir() -> PathBuf {
+    app_root_dir().join("config")
+}
+
+/// Diagnostic log and crash log: `<exe dir>\log`.
+fn log_dir() -> PathBuf {
+    app_root_dir().join("log")
 }
 
 fn ensure_sound_assets() {
-    let dir = app_data_dir().join("sounds");
+    let dir = config_dir().join("sounds");
     let _ = fs::create_dir_all(&dir);
     let start = dir.join("start.wav");
     let stop = dir.join("stop.wav");
@@ -625,7 +1115,7 @@ fn ensure_sound_assets() {
 }
 
 fn sound_path(name: &str) -> PathBuf {
-    app_data_dir().join("sounds").join(name)
+    config_dir().join("sounds").join(name)
 }
 
 fn write_chime(path: &PathBuf, notes: &[(f32, f32)]) -> Result<()> {
@@ -741,6 +1231,10 @@ unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
 
     let snapshot = settings_snapshot(&app);
     if !register_global_hotkey(hwnd, snapshot.hotkey_mods, snapshot.hotkey_vk) {
+        log_error(&format!(
+            "Global shortcut (mods=0x{:x}, vk=0x{:x}) is already taken by another app.",
+            snapshot.hotkey_mods, snapshot.hotkey_vk
+        ));
         update_ui(&app, |ui| {
             ui.status = "Shortcut unavailable — open settings to choose another.".to_string();
         });
@@ -885,34 +1379,70 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
     let mut model_path = PathBuf::new();
     let mut active = false;
     let mut audio_buffer = Vec::<f32>::with_capacity(NEMOTRON_CHUNK_SIZE * 2);
+    // Set after a failed background preload so that unrelated settings toggles
+    // (each of which re-sends Preload) don't pop the same error dialog again.
+    // Cleared by a model switch (Unload); an explicit Start always retries.
+    let mut preload_failed = false;
 
     loop {
         match rx.recv() {
             Ok(EngineCommand::Preload) => {
-                if model.is_some() {
+                if model.is_some() || preload_failed {
                     continue;
                 }
                 update_ui(&app, |ui| {
                     ui.status = "Loading Nemotron...".to_string();
+                    ui.model_status = "Loading...".to_string();
                 });
-                match load_nemotron() {
+                match load_nemotron(&settings_snapshot(&app)) {
                     Ok((loaded, path)) => {
+                        let label = model_status_label(&loaded, &settings_snapshot(&app).language);
                         model = Some(loaded);
                         model_path = path;
                         update_ui(&app, |ui| {
                             ui.status = "Ready. Nemotron loaded. Ctrl+Space toggles.".to_string();
                             ui.model_dir = model_path.display().to_string();
+                            ui.model_status = label;
                             if ui.transcript.trim().is_empty() {
                                 ui.transcript = "Tap Ctrl+Space to dictate.".to_string();
                             }
                         });
                     }
                     Err(err) => {
+                        preload_failed = true;
+                        report_model_error(&err);
                         update_ui(&app, |ui| {
                             ui.status = "Nemotron model missing or failed to load.".to_string();
                             ui.transcript = format!("{err:#}");
                             ui.model_dir = expected_model_hint();
+                            ui.model_status = "Failed to load - see log.".to_string();
                         });
+                    }
+                }
+            }
+            Ok(EngineCommand::Unload) => {
+                active = false;
+                audio_buffer.clear();
+                preload_failed = false;
+                if model.take().is_some() {
+                    log_info(&format!("Unloaded Nemotron model from {}", model_path.display()));
+                }
+                update_ui(&app, |ui| {
+                    ui.model_status = "Not loaded yet.".to_string();
+                });
+            }
+            Ok(EngineCommand::SetLanguage(language)) => {
+                // Nothing loaded (or English-only): the saved setting is applied
+                // when the multilingual model loads.
+                if let Some(loaded) = model.as_mut() {
+                    if loaded.mode() == NemotronMode::Multilingual {
+                        match apply_language(loaded, &language) {
+                            Ok(()) => {
+                                let label = model_status_label(loaded, &language);
+                                update_ui(&app, |ui| ui.model_status = label);
+                            }
+                            Err(err) => log_error(&format!("{err:#}")),
+                        }
                     }
                 }
             }
@@ -921,15 +1451,22 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                 if model.is_none() {
                     update_ui(&app, |ui| {
                         ui.status = "Loading Nemotron model...".to_string();
+                        ui.model_status = "Loading...".to_string();
                     });
-                    match load_nemotron() {
+                    match load_nemotron(&settings_snapshot(&app)) {
                         Ok((loaded, path)) => {
+                            preload_failed = false;
+                            let label =
+                                model_status_label(&loaded, &settings_snapshot(&app).language);
+                            update_ui(&app, |ui| ui.model_status = label);
                             model = Some(loaded);
                             model_path = path;
                         }
                         Err(err) => {
+                            report_model_error(&err);
                             app.recording.store(false, Ordering::SeqCst);
                             update_ui(&app, |ui| {
+                                ui.model_status = "Failed to load - see log.".to_string();
                                 ui.recording = false;
                                 ui.status = "Nemotron model missing or failed to load.".to_string();
                                 ui.transcript = format!("{err:#}");
@@ -992,6 +1529,7 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         }
                         Ok(_) => {}
                         Err(err) => {
+                            log_error(&format!("ASR error while transcribing: {err:#}"));
                             active = false;
                             app.recording.store(false, Ordering::SeqCst);
                             update_ui(&app, |ui| {
@@ -1047,7 +1585,10 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                                     settings.paste_delay_ms,
                                 ) {
                                     Ok(()) => "Stopped. Final transcript pasted.".to_string(),
-                                    Err(err) => format!("Final paste failed: {err}"),
+                                    Err(err) => {
+                                        log_error(&format!("Final paste failed: {err:#}"));
+                                        format!("Final paste failed: {err}")
+                                    }
                                 };
                             } else if settings.copy_final_to_clipboard {
                                 final_status =
@@ -1056,7 +1597,10 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                                             "Stopped. Final transcript copied to clipboard."
                                                 .to_string()
                                         }
-                                        Err(err) => format!("Clipboard failed: {err}"),
+                                        Err(err) => {
+                                            log_error(&format!("Clipboard failed: {err:#}"));
+                                            format!("Clipboard failed: {err}")
+                                        }
                                     };
                             }
                         }
@@ -1088,32 +1632,202 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
     }
 }
 
-fn load_nemotron() -> Result<(Nemotron, PathBuf)> {
-    let model_dir = find_model_dir()?;
-    let mut model = Nemotron::from_pretrained(&model_dir, None)
+fn report_model_error(err: &anyhow::Error) {
+    let message = format!("{err:#}");
+    log_error(&format!("Nemotron model failed to load: {message}"));
+    notify_user(
+        "Nemotron Bubble: speech model failed to load",
+        &format!(
+            "{message}\n\nYou can choose the speech model in the settings window.\n\n\
+             Log file: {}",
+            log_path().display()
+        ),
+        MB_ICONERROR,
+    );
+}
+
+/// The process-wide ONNX Runtime environment (parakeet-rs >= 0.4 requires one).
+/// Created on first use and shared by every model load, e.g. when switching models.
+fn ort_environment() -> Result<Environment> {
+    static ENV: OnceCell<Environment> = OnceCell::new();
+    ENV.get_or_try_init(|| parakeet_rs::ort::init().build())
+        .cloned()
+        .map_err(|err| anyhow!("failed to initialize ONNX Runtime: {err}"))
+}
+
+fn model_status_label(model: &Nemotron, language: &str) -> String {
+    match model.mode() {
+        NemotronMode::EnglishOnly => "Loaded: English".to_string(),
+        NemotronMode::Multilingual if normalize_language(language) == "auto" => {
+            "Loaded: Multilingual (detects language)".to_string()
+        }
+        NemotronMode::Multilingual => format!("Loaded: Multilingual ({})", language_label(language)),
+    }
+}
+
+/// Point the multilingual model at `language` (a LANGUAGES code; "auto" lets
+/// the model detect it). Takes effect from the next audio chunk, no reload needed.
+fn apply_language(model: &mut Nemotron, language: &str) -> Result<()> {
+    let code = normalize_language(language);
+    model
+        .set_target_lang(code)
+        .map_err(|err| anyhow!("failed to set language '{code}': {err}"))?;
+    log_info(&format!("Multilingual language: {} ({code})", language_label(code)));
+    Ok(())
+}
+
+fn load_nemotron(settings: &AppSettings) -> Result<(Nemotron, PathBuf)> {
+    let choice = settings.model;
+    let model_dir = find_model_dir(choice, &settings.model_dir)?;
+    log_info(&format!(
+        "Loading Nemotron ({} selected) from {}",
+        choice.label(),
+        model_dir.display()
+    ));
+    check_model_files(&model_dir)?;
+
+    let started = Instant::now();
+    let exec_config = ExecutionConfig::new().with_environment(ort_environment()?);
+    let mut model = Nemotron::from_pretrained(&model_dir, Some(exec_config))
         .map_err(|err| anyhow!("failed to load {}: {err}", model_dir.display()))?;
 
+    let mode = match model.mode() {
+        NemotronMode::EnglishOnly => "English-only",
+        NemotronMode::Multilingual => "Multilingual",
+    };
     if model.mode() == NemotronMode::Multilingual {
-        model
-            .set_target_lang("auto")
-            .map_err(|err| anyhow!("failed to set multilingual auto language: {err}"))?;
+        apply_language(&mut model, &settings.language)?;
+    }
+    log_info(&format!(
+        "Nemotron loaded ({mode}) in {:.1}s",
+        started.elapsed().as_secs_f32()
+    ));
+    let mismatch = matches!(
+        (choice, model.mode()),
+        (ModelChoice::English, NemotronMode::Multilingual)
+            | (ModelChoice::Multilingual, NemotronMode::EnglishOnly)
+    );
+    if mismatch {
+        log_error(&format!(
+            "{} was selected, but {} contains the {mode} model.",
+            choice.label(),
+            model_dir.display()
+        ));
     }
 
     Ok((model, model_dir))
 }
 
-fn find_model_dir() -> Result<PathBuf> {
-    let mut candidates = Vec::<PathBuf>::new();
+/// Catch the most common broken-download cases (missing weights file, or a file
+/// left truncated by an interrupted download — the script skips files that
+/// already exist) with a readable message instead of an opaque ONNX error.
+fn check_model_files(model_dir: &std::path::Path) -> Result<()> {
+    const MIN_SIZES: &[(&str, u64)] = &[
+        ("encoder.onnx", 1_000_000),
+        ("encoder.onnx.data", 2_000_000_000),
+        ("decoder_joint.onnx", 10_000_000),
+        ("tokenizer.model", 100_000),
+    ];
+    let mut problems = Vec::new();
+    for (name, min) in MIN_SIZES {
+        let path = model_dir.join(name);
+        match fs::metadata(&path) {
+            Ok(meta) => {
+                log_info(&format!("  {name}: {} bytes", meta.len()));
+                if meta.len() < *min {
+                    problems.push(format!(
+                        "{name} is only {} bytes — the download looks incomplete",
+                        meta.len()
+                    ));
+                }
+            }
+            Err(_) => problems.push(format!("{name} is missing")),
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Model files in {} are not usable:\n  - {}\nDelete the affected file(s) and run the download script again.",
+            model_dir.display(),
+            problems.join("\n  - ")
+        ))
+    }
+}
 
+/// The Predefined folders, in priority order: NEMOTRON_MODEL_DIR, then
+/// `model_dir` from settings.json. Empty when neither is set.
+fn predefined_model_dirs(configured_dir: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
     if let Ok(path) = env::var("NEMOTRON_MODEL_DIR") {
-        candidates.push(PathBuf::from(path));
+        if !path.trim().is_empty() {
+            dirs.push(PathBuf::from(path.trim()));
+        }
     }
+    if !configured_dir.trim().is_empty() {
+        dirs.push(PathBuf::from(configured_dir.trim()));
+    }
+    dirs
+}
 
+/// Whether `choice` can be selected. Only Predefined can be unavailable: it
+/// needs NEMOTRON_MODEL_DIR or `model_dir`. Both are fixed while the app runs
+/// (settings are read once at startup, and a process keeps its environment), so
+/// the UI can grey it out for the whole session.
+fn model_choice_available(settings: &AppSettings, choice: ModelChoice) -> bool {
+    choice != ModelChoice::Predefined || !predefined_model_dirs(&settings.model_dir).is_empty()
+}
+
+/// The model choice for a first start (or an unknown saved value): Predefined
+/// when a predefined folder is set, otherwise the installed model (English
+/// first). Falls back to English, whose error message then explains the download.
+fn detect_model_choice(configured_dir: &str) -> ModelChoice {
+    let choice = if !predefined_model_dirs(configured_dir).is_empty() {
+        ModelChoice::Predefined
+    } else if find_model_dir(ModelChoice::English, configured_dir).is_ok() {
+        ModelChoice::English
+    } else if find_model_dir(ModelChoice::Multilingual, configured_dir).is_ok() {
+        ModelChoice::Multilingual
+    } else {
+        ModelChoice::English
+    };
+    log_info(&format!("No speech model chosen yet; selected {}", choice.label()));
+    choice
+}
+
+fn has_model_files(dir: &std::path::Path) -> bool {
+    dir.join("encoder.onnx").exists()
+        && dir.join("decoder_joint.onnx").exists()
+        && dir.join("tokenizer.model").exists()
+}
+
+fn find_model_dir(choice: ModelChoice, configured_dir: &str) -> Result<PathBuf> {
+    let Some(folder_name) = choice.folder_name() else {
+        // Predefined: only the configured folders, never the standard ones.
+        let dirs = predefined_model_dirs(configured_dir);
+        if dirs.is_empty() {
+            return Err(anyhow!(
+                "No predefined model folder is set.\n\nSet the NEMOTRON_MODEL_DIR environment \
+                 variable or \"model_dir\" in {}, or choose English or Multilingual in the settings.",
+                settings_path().display()
+            ));
+        }
+        return dirs.iter().find(|dir| has_model_files(dir)).cloned().ok_or_else(|| {
+            anyhow!(
+                "The predefined model folder does not contain the Nemotron ONNX files:\n{}",
+                dirs.iter()
+                    .map(|p| format!("  - {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        });
+    };
+
+    let mut candidates = Vec::<PathBuf>::new();
+    let mut search_roots = Vec::<PathBuf>::new();
     if let Ok(cwd) = env::current_dir() {
-        candidates.push(cwd.join("models").join("nemotron"));
-        candidates.push(cwd.join("models").join("nemotron_multi"));
+        search_roots.push(cwd);
     }
-
     // Walk up from the executable so the model is found no matter the working
     // directory. This matters for "Start with Windows", where Windows launches us
     // with the working directory set to System32 — and for the cargo layout, where
@@ -1122,23 +1836,30 @@ fn find_model_dir() -> Result<PathBuf> {
         let mut dir = exe.parent();
         for _ in 0..5 {
             let Some(d) = dir else { break };
-            candidates.push(d.join("models").join("nemotron"));
-            candidates.push(d.join("models").join("nemotron_multi"));
+            search_roots.push(d.to_path_buf());
             dir = d.parent();
         }
     }
-
-    for candidate in &candidates {
-        if candidate.join("encoder.onnx").exists()
-            && candidate.join("decoder_joint.onnx").exists()
-            && candidate.join("tokenizer.model").exists()
-        {
-            return Ok(candidate.clone());
+    for root in &search_roots {
+        let candidate = root.join("models").join(folder_name);
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
         }
     }
 
+    if let Some(found) = candidates.iter().find(|dir| has_model_files(dir)) {
+        return Ok(found.clone());
+    }
+
+    let hint = if choice == ModelChoice::Multilingual {
+        "The multilingual model is not installed. Download it with \
+         scripts\\download-nemotron.ps1 -Multilingual, or pick another model in the settings.\n\n"
+    } else {
+        "The English model is not installed. Download it with \
+         scripts\\download-nemotron.ps1, or pick another model in the settings.\n\n"
+    };
     Err(anyhow!(
-        "Expected Nemotron ONNX files in one of these folders:\n{}",
+        "{hint}Expected Nemotron ONNX files in one of these folders:\n{}",
         candidates
             .iter()
             .map(|p| format!("  - {}", p.display()))
@@ -1158,10 +1879,18 @@ fn start_audio_capture(app: Arc<AppState>) -> Result<cpal::Stream> {
     let device = host
         .default_input_device()
         .ok_or_else(|| anyhow!("no default microphone found"))?;
-    let input_config = device.default_input_config()?;
+    let device_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
+    let input_config = device
+        .default_input_config()
+        .with_context(|| format!("microphone '{device_name}' has no usable input format"))?;
     let sample_rate = input_config.sample_rate().0 as f64;
     let channels = input_config.channels() as usize;
     let config = input_config.config();
+    log_info(&format!(
+        "Microphone: '{device_name}', {} Hz, {channels} channel(s), {:?}",
+        sample_rate as u32,
+        input_config.sample_format()
+    ));
 
     update_ui(&app, |ui| {
         ui.status = format!(
@@ -1174,6 +1903,8 @@ fn start_audio_capture(app: Arc<AppState>) -> Result<cpal::Stream> {
     let recording = app.recording.clone();
     let err_app = app.clone();
     let err_fn = move |err: cpal::StreamError| {
+        log_error(&format!("Microphone stream error: {err}"));
+        MIC_FAILED.store(true, Ordering::SeqCst);
         update_ui(&err_app, |ui| {
             ui.status = "Microphone error.".to_string();
             ui.transcript = err.to_string();
@@ -1211,7 +1942,9 @@ fn start_audio_capture(app: Arc<AppState>) -> Result<cpal::Stream> {
         other => return Err(anyhow!("unsupported microphone sample format: {other:?}")),
     };
 
-    stream.play()?;
+    stream
+        .play()
+        .with_context(|| format!("could not start recording from '{device_name}'"))?;
     Ok(stream)
 }
 
@@ -1362,6 +2095,13 @@ fn toggle_recording() {
 }
 
 fn start_recording(app: &Arc<AppState>) {
+    if !ensure_audio_capture(app) {
+        update_ui(app, |ui| {
+            ui.recording = false;
+            ui.status = "No microphone available. Connect one and try again.".to_string();
+        });
+        return;
+    }
     remember_target_window(app);
     app.recording.store(true, Ordering::SeqCst);
     app.enter_pending.store(false, Ordering::SeqCst);
@@ -1844,6 +2584,16 @@ fn handle_command(command: usize) {
         IDM_START_STOP => toggle_recording(),
         IDM_SHOW_HIDE => toggle_window_visibility(),
         IDM_CLEAR => clear_transcript(),
+        id if (IDM_MODEL_BASE..IDM_MODEL_BASE + ModelChoice::ALL.len()).contains(&id) => {
+            if let Some(app) = APP.get() {
+                select_model(app, ModelChoice::ALL[id - IDM_MODEL_BASE]);
+            }
+        }
+        id if (IDM_LANG_BASE..IDM_LANG_BASE + LANGUAGES.len()).contains(&id) => {
+            if let Some(app) = APP.get() {
+                select_language(app, LANGUAGES[id - IDM_LANG_BASE].0);
+            }
+        }
         IDM_QUIT => unsafe {
             let Some(app) = APP.get() else {
                 return;
@@ -1992,6 +2742,24 @@ fn handle_settings_click(x: i32, y: i32) {
 
     if settings_clear_history_rect().contains(x, y) {
         clear_history(app);
+        return;
+    }
+
+    for choice in ModelChoice::ALL {
+        if settings_model_rect(choice).contains(x, y) {
+            select_model(app, choice);
+            return;
+        }
+    }
+
+    if settings_language_rect().contains(x, y) {
+        if language_selectable(&settings_snapshot(app)) {
+            unsafe { show_language_menu(app) };
+        } else {
+            update_ui(app, |ui| {
+                ui.status = "The language applies to the multilingual model only.".to_string();
+            });
+        }
         return;
     }
 
@@ -2597,9 +3365,10 @@ unsafe fn paint_settings(hwnd: HWND) {
         return;
     }
     let capturing = app.capturing_hotkey.load(Ordering::SeqCst);
+    let model_status = lock_ui(app).model_status.clone();
     if let Some(mut canvas) = Canvas::new(SETTINGS_WIDTH, SETTINGS_HEIGHT) {
         // history = None: the live EDIT control paints the recent-dictations panel.
-        render_settings_canvas(&mut canvas, &settings, None, capturing);
+        render_settings_canvas(&mut canvas, &settings, &model_status, None, capturing);
         canvas.blit_to(hdc);
     }
     EndPaint(hwnd, &ps);
@@ -2611,6 +3380,7 @@ unsafe fn paint_settings(hwnd: HWND) {
 unsafe fn render_settings_canvas(
     canvas: &mut Canvas,
     settings: &AppSettings,
+    model_status: &str,
     history: Option<&[HistoryItem]>,
     capturing: bool,
 ) {
@@ -2618,14 +3388,14 @@ unsafe fn render_settings_canvas(
     let cw = canvas.w;
     let ch = canvas.h;
     let card_top = 102.0;
-    let card_h = ch as f32 - card_top - 20.0;
+    let card_h = ch as f32 - card_top - SETTINGS_FOOTER_H as f32;
     let right_card_x = 384.0;
 
     // history panel region (matches create_history_edit)
     let ex = 400;
-    let ey = 182;
+    let ey = HISTORY_PANEL_TOP;
     let ew = SETTINGS_WIDTH - 436;
-    let eh = SETTINGS_HEIGHT - 206;
+    let eh = SETTINGS_HEIGHT - HISTORY_PANEL_TOP - SETTINGS_FOOTER_H - 4;
 
     // -------- pass 1: anti-aliased shapes straight into the pixel buffer --------
     {
@@ -2652,6 +3422,26 @@ unsafe fn render_settings_canvas(
         draw_button_bg(buf, cw, ch, settings_clear_history_rect(), false);
         // shortcut rebind button (accent while capturing)
         draw_button_bg(buf, cw, ch, settings_shortcut_rect(), capturing);
+
+        // speech-model segmented control: dark track, accent on the selection
+        let track = settings_model_track_rect();
+        fill_round_rect(
+            buf,
+            cw,
+            ch,
+            track.left as f32,
+            track.top as f32,
+            (track.right - track.left) as f32,
+            (track.bottom - track.top) as f32,
+            13.0,
+            (40, 44, 54),
+            (36, 40, 49),
+            1.0,
+        );
+        draw_button_bg(buf, cw, ch, settings_model_rect(settings.model), true);
+
+        // language button (same look as the shortcut button)
+        draw_button_bg(buf, cw, ch, settings_language_rect(), false);
 
         for row in &rows {
             draw_toggle(buf, cw, ch, settings_toggle_rect(row.id), row.enabled);
@@ -2685,7 +3475,46 @@ unsafe fn render_settings_canvas(
     SelectObject(dc, small_font() as _);
     SetTextColor(dc, rgb(122, 132, 147));
     text_left(dc, "BEHAVIOR", 34, 82, 200, 18);
-    text_left(dc, "HISTORY", right_card_x as i32 + 16, 82, 200, 18);
+    text_left(dc, "MODEL & HISTORY", right_card_x as i32 + 16, 82, 200, 18);
+
+    // speech-model row
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, "Speech model", right_card_x as i32 + 16, 115, 264, 20);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(124, 134, 148));
+    text_left(dc, model_status, right_card_x as i32 + 16, 135, 264, 18);
+    SelectObject(dc, ui_font() as _);
+    for choice in ModelChoice::ALL {
+        if choice == settings.model {
+            SetTextColor(dc, rgb(245, 248, 252));
+        } else if !model_choice_available(settings, choice) {
+            SetTextColor(dc, rgb(92, 100, 114)); // greyed out: nothing predefined
+        } else {
+            SetTextColor(dc, rgb(184, 192, 205));
+        }
+        text_center(dc, choice.label(), settings_model_rect(choice));
+    }
+
+    // language row: label + detail on the left, popup button on the right
+    let language_enabled = language_selectable(settings);
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, "Language", right_card_x as i32 + 16, LANGUAGE_ROW_TOP + 1, 110, 20);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(124, 134, 148));
+    text_left(dc, "Multilingual model only.", right_card_x as i32 + 16, LANGUAGE_ROW_TOP + 21, 136, 18);
+    SelectObject(dc, ui_font() as _);
+    if language_enabled {
+        SetTextColor(dc, rgb(245, 248, 252));
+    } else {
+        SetTextColor(dc, rgb(92, 100, 114));
+    }
+    text_center(
+        dc,
+        &format!("{}  \u{25BE}", language_label(&settings.language)),
+        settings_language_rect(),
+    );
 
     // shortcut row
     SelectObject(dc, ui_font() as _);
@@ -2713,9 +3542,23 @@ unsafe fn render_settings_canvas(
         dc,
         "Select a line and copy with Ctrl+C.",
         right_card_x as i32 + 16,
-        158,
+        HISTORY_BUTTONS_TOP + 44,
         cw - right_card_x as i32 - 36,
         18,
+    );
+
+    // version footer, bottom right below the Model & History card
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(108, 118, 132));
+    text_right(
+        dc,
+        &format!("Version {APP_VERSION}"),
+        RectI {
+            left: cw - 236,
+            top: ch - SETTINGS_FOOTER_H + 10,
+            right: cw - 34,
+            bottom: ch - SETTINGS_FOOTER_H + 28,
+        },
     );
 
     for row in &rows {
@@ -2807,6 +3650,17 @@ unsafe fn text_left(dc: HDC, text: &str, x: i32, y: i32, w: i32, h: i32) {
         &mut rect,
         DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX,
     );
+}
+
+unsafe fn text_right(dc: HDC, text: &str, rect: RectI) {
+    let mut r = RECT {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    };
+    let wide = wide_null(text);
+    DrawTextW(dc, wide.as_ptr(), -1, &mut r, DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 }
 
 unsafe fn text_center(dc: HDC, text: &str, rect: RectI) {
@@ -2902,7 +3756,7 @@ unsafe fn add_tray_icon(hwnd: HWND) {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = shown;
-    fill_wide_fixed(&mut nid.szTip, "Nemotron Bubble");
+    fill_wide_fixed(&mut nid.szTip, &format!("Nemotron Bubble {APP_VERSION}"));
     Shell_NotifyIconW(NIM_ADD, &mut nid);
     CURRENT_TRAY_ICON.store(icon as isize, Ordering::SeqCst);
 }
@@ -2934,12 +3788,54 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     let show_text = wide_null("Show / Hide Bubble");
     let clear_text = wide_null("Clear");
     let quit_text = wide_null("Quit");
+    let model_text = wide_null("Speech model");
+    let version_text = wide_null(&format!("Nemotron Bubble {APP_VERSION}"));
+
+    // "Speech model" submenu, current choice checked; locked while dictating.
+    let menu_settings = APP.get().map(settings_snapshot).unwrap_or_default();
+    let current_model = menu_settings.model;
+    let model_menu = CreatePopupMenu();
+    let model_labels: Vec<Vec<u16>> = ModelChoice::ALL
+        .iter()
+        .map(|choice| wide_null(choice.label()))
+        .collect();
+    if model_menu != null_mut() {
+        for (index, choice) in ModelChoice::ALL.iter().enumerate() {
+            let mut flags = MF_STRING;
+            if *choice == current_model {
+                flags |= MF_CHECKED;
+            }
+            if recording || !model_choice_available(&menu_settings, *choice) {
+                flags |= MF_GRAYED;
+            }
+            AppendMenuW(model_menu, flags, IDM_MODEL_BASE + index, model_labels[index].as_ptr());
+        }
+    }
 
     AppendMenuW(menu, MF_STRING, IDM_START_STOP, start_text.as_ptr());
     AppendMenuW(menu, MF_STRING, IDM_SHOW_HIDE, show_text.as_ptr());
     AppendMenuW(menu, MF_STRING, IDM_CLEAR, clear_text.as_ptr());
+    if model_menu != null_mut() {
+        // DestroyMenu(menu) below also destroys this attached submenu.
+        AppendMenuW(menu, MF_POPUP, model_menu as usize, model_text.as_ptr());
+    }
+    let language_menu = build_language_menu(&menu_settings, recording);
+    let language_text = wide_null(&format!(
+        "Language: {}",
+        language_label(&menu_settings.language)
+    ));
+    if language_menu != null_mut() {
+        let flags = if language_selectable(&menu_settings) {
+            MF_POPUP
+        } else {
+            MF_POPUP | MF_GRAYED
+        };
+        AppendMenuW(menu, flags, language_menu as usize, language_text.as_ptr());
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, IDM_QUIT, quit_text.as_ptr());
+    AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, version_text.as_ptr());
 
     let mut point: POINT = std::mem::zeroed();
     GetCursorPos(&mut point);
@@ -2960,18 +3856,54 @@ fn settings_close_rect() -> RectI {
 fn settings_copy_latest_rect() -> RectI {
     RectI {
         left: 400,
-        top: 114,
+        top: HISTORY_BUTTONS_TOP,
         right: 512,
-        bottom: 146,
+        bottom: HISTORY_BUTTONS_TOP + 32,
     }
 }
 
 fn settings_clear_history_rect() -> RectI {
     RectI {
         left: 524,
-        top: 114,
+        top: HISTORY_BUTTONS_TOP,
         right: 600,
-        bottom: 146,
+        bottom: HISTORY_BUTTONS_TOP + 32,
+    }
+}
+
+/// The Language button (opens the language popup menu), right of its label.
+fn settings_language_rect() -> RectI {
+    RectI {
+        left: 540,
+        top: LANGUAGE_ROW_TOP + 4,
+        right: SETTINGS_WIDTH - 36,
+        bottom: LANGUAGE_ROW_TOP + 36,
+    }
+}
+
+/// Background track of the speech-model segmented control (right card, top).
+fn settings_model_track_rect() -> RectI {
+    RectI {
+        left: 400,
+        top: MODEL_PICKER_TOP,
+        right: SETTINGS_WIDTH - 36,
+        bottom: MODEL_PICKER_TOP + 32,
+    }
+}
+
+/// One segment (English / Multilingual / Predefined) of the speech-model control.
+fn settings_model_rect(choice: ModelChoice) -> RectI {
+    let track = settings_model_track_rect();
+    let index = ModelChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0) as i32;
+    let count = ModelChoice::ALL.len() as i32;
+    let width = (track.right - track.left) / count;
+    let left = track.left + index * width;
+    let right = if index == count - 1 { track.right } else { left + width };
+    RectI {
+        left,
+        top: track.top,
+        right,
+        bottom: track.bottom,
     }
 }
 
@@ -3269,7 +4201,9 @@ fn render_assets(out_dir: &str) -> Result<()> {
         let cw = SETTINGS_WIDTH;
         let ch = SETTINGS_HEIGHT;
         if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
-            unsafe { render_settings_canvas(&mut canvas, &settings, Some(&history), false) };
+            unsafe {
+                render_settings_canvas(&mut canvas, &settings, "Loaded: English", Some(&history), false)
+            };
             let rgba = settings_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
             write_png(&dir.join("settings.png"), cw as u32, ch as u32, &rgba)?;
         }
@@ -3430,6 +4364,146 @@ fn write_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<()> 
     encoder.set_depth(png::BitDepth::Eight);
     encoder.write_header()?.write_image_data(rgba)?;
     Ok(())
+}
+
+/// Write the exe icon (embedded by build.rs) as a multi-size .ico.
+/// Run with:  cargo run --release --features assets -- --render-icon assets/nemotron-bubble.ico
+#[cfg(feature = "assets")]
+fn render_icon(path: &std::path::Path) -> Result<()> {
+    const SIZES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
+    let mut images = Vec::new();
+    for size in SIZES {
+        let rgba = app_icon_rgba(size);
+        let data = if size >= 256 {
+            // 256 px: PNG-compressed, as Windows expects for the large size.
+            let mut png_bytes = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut png_bytes, size, size);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder.write_header()?.write_image_data(&rgba)?;
+            }
+            png_bytes
+        } else {
+            icon_dib(size, &rgba)
+        };
+        images.push((size, data));
+    }
+
+    // ICO container: uncompressed 32-bit DIBs for the small sizes (readable by
+    // every tool), PNG for 256 px.
+    let mut ico = Vec::new();
+    ico.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ico.extend_from_slice(&1u16.to_le_bytes()); // type: icon
+    ico.extend_from_slice(&(images.len() as u16).to_le_bytes());
+    let mut offset = 6 + 16 * images.len() as u32;
+    for (size, data) in &images {
+        let dim = if *size >= 256 { 0u8 } else { *size as u8 }; // 0 means 256
+        ico.extend_from_slice(&[dim, dim, 0, 0]); // width, height, palette, reserved
+        ico.extend_from_slice(&1u16.to_le_bytes()); // planes
+        ico.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        ico.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        ico.extend_from_slice(&offset.to_le_bytes());
+        offset += data.len() as u32;
+    }
+    for (_, data) in &images {
+        ico.extend_from_slice(data);
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, ico)?;
+    println!("Wrote {} ({} sizes)", path.display(), images.len());
+    Ok(())
+}
+
+/// One ICO entry as a 32-bit DIB: BITMAPINFOHEADER (height doubled to cover the
+/// AND mask), BGRA rows bottom-up, then an all-zero 1-bit AND mask (alpha rules).
+#[cfg(feature = "assets")]
+fn icon_dib(size: u32, rgba: &[u8]) -> Vec<u8> {
+    let mask_row = size.div_ceil(32) * 4; // 1 bpp rows padded to 32 bits
+    let mut dib = Vec::new();
+    dib.extend_from_slice(&40u32.to_le_bytes()); // biSize
+    dib.extend_from_slice(&(size as i32).to_le_bytes()); // biWidth
+    dib.extend_from_slice(&((size * 2) as i32).to_le_bytes()); // biHeight: XOR + AND
+    dib.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+    dib.extend_from_slice(&32u16.to_le_bytes()); // biBitCount
+    dib.extend_from_slice(&0u32.to_le_bytes()); // biCompression = BI_RGB
+    dib.extend_from_slice(&(size * size * 4 + mask_row * size).to_le_bytes()); // biSizeImage
+    dib.extend_from_slice(&[0u8; 16]); // resolution + palette fields
+    for y in (0..size).rev() {
+        for x in 0..size {
+            let i = ((y * size + x) * 4) as usize;
+            dib.extend_from_slice(&[rgba[i + 2], rgba[i + 1], rgba[i], rgba[i + 3]]);
+        }
+    }
+    dib.resize(dib.len() + (mask_row * size) as usize, 0);
+    dib
+}
+
+/// The app icon as straight-alpha RGBA: a smooth, resolution-independent take on
+/// the tray glyph (dark disc with the equalizer bars in the recording blue).
+/// Geometry is defined on the tray icon's 32-unit grid and supersampled 4x4.
+#[cfg(feature = "assets")]
+fn app_icon_rgba(size: u32) -> Vec<u8> {
+    const SHAPE: [f32; 9] = [0.30, 0.58, 0.86, 1.0, 0.72, 0.46, 0.66, 0.9, 0.5];
+    const SS: u32 = 4;
+    let disc = (26.0f32, 29.0, 35.0); // tray background 0x1A1D21
+    let bar = (122.0f32, 184.0, 255.0); // recording accent 0x7AB8FF
+    let rim = (72.0f32, 80.0, 96.0);
+    let scale = 32.0 / size as f32;
+
+    // Capsule (rounded bar) membership for a point on the 32-unit grid.
+    let in_bar = |x: f32, y: f32| -> bool {
+        let radius = 0.75;
+        SHAPE.iter().enumerate().any(|(i, s)| {
+            let cx = 8.0 + i as f32 * 2.0;
+            let half = (s * 0.8 * 22.0) / 2.0;
+            let top = 16.0 - half + radius;
+            let bottom = 16.0 + half - radius;
+            let dy = if y < top { top - y } else if y > bottom { y - bottom } else { 0.0 };
+            let dx = x - cx;
+            dx * dx + dy * dy <= radius * radius
+        })
+    };
+
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    for py in 0..size {
+        for px in 0..size {
+            let (mut disc_hits, mut bar_hits, mut rim_hits) = (0u32, 0u32, 0u32);
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * scale;
+                    let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * scale;
+                    let (dx, dy) = (x - 16.0, y - 16.0);
+                    let dist_sq = dx * dx + dy * dy;
+                    if dist_sq <= 15.0 * 15.0 {
+                        disc_hits += 1;
+                        if in_bar(x, y) {
+                            bar_hits += 1;
+                        } else if dist_sq >= 14.0 * 14.0 {
+                            // thin lighter rim so the disc stays visible on dark backgrounds
+                            rim_hits += 1;
+                        }
+                    }
+                }
+            }
+            if disc_hits == 0 {
+                continue;
+            }
+            let hits = disc_hits as f32;
+            let (tb, tr) = (bar_hits as f32 / hits, rim_hits as f32 / hits);
+            let td = 1.0 - tb - tr;
+            let mix = |d: f32, b: f32, r: f32| (d * td + b * tb + r * tr).round() as u8;
+            let i = ((py * size + px) * 4) as usize;
+            out[i] = mix(disc.0, bar.0, rim.0);
+            out[i + 1] = mix(disc.1, bar.1, rim.1);
+            out[i + 2] = mix(disc.2, bar.2, rim.2);
+            out[i + 3] = ((disc_hits as f32 / (SS * SS) as f32) * 255.0).round() as u8;
+        }
+    }
+    out
 }
 
 #[cfg(feature = "assets")]

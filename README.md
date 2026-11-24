@@ -62,6 +62,61 @@ You can also point at a custom folder with `$env:NEMOTRON_MODEL_DIR = "C:\path\t
 
 Or grab a prebuilt binary from the [Releases](https://github.com/snipemanmike/nemotron-bubble/releases) page and run the download script next to it.
 
+### Choosing the model
+
+Pick the model under **Speech model** in the settings window:
+
+| Choice | Loads |
+| --- | --- |
+| **Predefined** | the folder in `NEMOTRON_MODEL_DIR`, otherwise `"model_dir"` from `config\settings.json` |
+| **English** | `models\nemotron` |
+| **Multilingual** | `models\nemotron_multi`, which detects the spoken language automatically |
+
+`models\` is searched in the working directory, next to the exe and up to four parent folders.
+On first start the choice is detected: **Predefined** if one of its folders is set, otherwise
+**English** if installed, otherwise **Multilingual**. Switching unloads the old model first;
+with *Preload Nemotron* on, the new one loads right away. The line under *Speech model* shows
+what is loaded, as reported by the model itself.
+
+### Language (multilingual model)
+
+By default the multilingual model works out the spoken language itself. If you know the
+language, set it under **Language** in the settings window or the tray menu; NVIDIA's
+documentation says this is more accurate than auto-detection. The choice applies instantly,
+without reloading the model. Offered are *Auto-detect* plus the 15 languages NVIDIA rates
+transcription-ready: Arabic, Dutch, English, French, German, Hindi, Italian, Japanese,
+Korean, Portuguese, Russian, Spanish, Turkish, Ukrainian, Vietnamese. With the English
+model selected the setting is greyed out.
+
+### Portable layout
+
+The app keeps all its files next to the exe, so the folder can be copied or deleted as a whole:
+
+```
+nemotron-bubble.exe
+DirectML.dll
+config\    settings.json, history.json, sounds\
+log\       nemotron-bubble.log, crash.log
+models\    nemotron\, nemotron_multi\
+```
+
+The folder must be writable, so don't put it under `C:\Program Files`. The only thing outside
+it is the *Start with Windows* entry (`HKCU\...\CurrentVersion\Run\NemotronBubble`), which
+the app removes when you turn that setting off.
+
+## Troubleshooting
+
+- **Log file:** `log\nemotron-bubble.log` (next to the exe) records startup, microphone,
+  model loading (folder, file sizes, mode, load time) and every error. The same lines go to
+  `OutputDebugString`, so [DebugView](https://learn.microsoft.com/sysinternals/downloads/debugview)
+  shows them live (filter on `NemotronBubble`).
+- **Self-test:** run `nemotron-bubble.exe --self-test` from a terminal. It loads the model,
+  runs one chunk, and prints the result or the full error.
+- **No microphone:** the app shows a warning and keeps running in the tray. It reopens the
+  microphone the next time you start dictation.
+- **Model fails to load:** a dialog shows the reason. An interrupted download is the usual
+  cause: `encoder.onnx.data` must be about 2.5 GB. Delete the bad file and rerun the script.
+
 ## Controls
 
 | Action | How |
@@ -83,6 +138,9 @@ cargo build --release            # the app
 
 # Regenerate the README art (bubble.png, demo.gif, settings.png)
 cargo run --release --features assets -- --render-assets docs
+
+# Regenerate the exe icon (embedded by build.rs together with the version info)
+cargo run --release --features assets -- --render-icon assets/nemotron-bubble.ico
 ```
 
 ## Credits
