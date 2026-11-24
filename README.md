@@ -22,6 +22,7 @@ This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike
 | **Redesigned settings window** | A compact window with three tabs (*History*, *Model*, *Settings*) that opens right next to the bubble or the tray icon. Each history entry has a copy icon and shows how fast it was processed. |
 | **Multilingual model fixed** | The multilingual Nemotron model crashed while loading and left the app without speech recognition. It now loads reliably and can be selected next to the English model. |
 | **Bubble position presets** | Place the floating bubble in one of six positions (top or bottom, each left, center or right). The choice is saved. |
+| **Microphone selection** | Choose the input device in the app instead of in the Windows settings. *Windows default* follows a change of the Windows default device without restarting the app. |
 | **GPU support** | Run the model on the GPU via DirectML, which works with any DirectX 12 graphics adapter, or stay on the CPU. *Auto* tries the GPU first. |
 | **Language selection** | Tell the multilingual model which language you speak instead of letting it guess. 15 languages are offered, and NVIDIA rates this as more accurate than auto-detection. |
 | **Clear error feedback** | A missing microphone or a model that fails to load now shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
@@ -68,7 +69,7 @@ Click the bubble or the tray icon to open it. It appears next to whatever you cl
   <tr>
     <td valign="top">Recent dictations, newest first. The icon in front of each entry copies its text. The grey line shows when it was dictated, on which device, and the processing time per audio chunk. The trash bin clears the history.</td>
     <td valign="top">Where the model runs (<b>Processing</b>), which model is loaded (<b>Speech model</b>, with what is loaded right now underneath), the spoken <b>Language</b> for the multilingual model, and <b>Preload Nemotron</b>.</td>
-    <td valign="top">The global shortcut, how text is inserted, sounds and animations, the silence auto-stop, and the floating bubble: whether it is shown, what a click on it does, and its <b>Bubble position</b>.</td>
+    <td valign="top">The global shortcut, the <b>Microphone</b>, how text is inserted, sounds and animations, the silence auto-stop, and the floating bubble: whether it is shown, what a click on it does, and its <b>Bubble position</b>. The tab scrolls with the mouse wheel.</td>
   </tr>
 </table>
 > [!NOTE]
@@ -93,7 +94,7 @@ ___
 ## Quick start
 
 ```powershell
-git clone https://github.com/snipemanmike/nemotron-bubble.git
+git clone https://github.com/LittleGitPhoenix/nemotron-bubble.git
 cd nemotron-bubble
 
 # One-time: download the Nemotron speech model (~2.4 GB) into models\nemotron\
@@ -105,7 +106,7 @@ cargo run --release
 
 Prefer the multilingual model? Run `.\scripts\download-nemotron.ps1 -Multilingual`. You can also point at a custom folder with `$env:NEMOTRON_MODEL_DIR = "C:\path\to\nemotron"`.
 
-Or grab a prebuilt binary from the [Releases](https://github.com/snipemanmike/nemotron-bubble/releases) page and run the download script next to it.
+Or grab a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page and run the download script next to it.
 
 ### Choosing the model
 
@@ -168,6 +169,7 @@ ___
 | --- | --- |
 | Start / stop dictation | your shortcut (default `Ctrl+Space`) |
 | Change the shortcut | *Settings* tab → click *Global shortcut*, press the new combo |
+| Choose the microphone | *Settings* tab → *Microphone*. *Windows default* follows the Windows sound settings. |
 | Open / close the settings window | click the bubble (opens next to it) **or** the tray icon (opens next to the tray) |
 | Move the bubble | pick a preset under *Settings* tab → *Bubble position* (saved), or drag it (until the next start) |
 | Copy a past dictation | *History* tab → the copy icon in front of the entry |
@@ -188,7 +190,7 @@ Nemotron Bubble is a Rust app built directly on the Win32 API. There is no Elect
 | `src/history.rs` | Recent dictations and the state of the History list |
 | `src/model.rs` | Finding, checking and loading the speech model, GPU probing, languages |
 | `src/engine.rs` | The speech engine thread and recording control |
-| `src/audio.rs` | Microphone capture and resampling to 16 kHz |
+| `src/audio.rs` | Microphone selection, capture and resampling to 16 kHz |
 | `src/output.rs` | Clipboard, Ctrl+V and Unicode keystrokes |
 | `src/hotkey.rs` | The global shortcut |
 | `src/sound.rs` | Start and stop sound cues |
@@ -201,7 +203,7 @@ Nemotron Bubble is a Rust app built directly on the Win32 API. There is no Elect
 | `src/ui/settings_window/history_tab.rs` | The *History* tab |
 | `src/ui/settings_window/model_tab.rs` | The *Model* tab |
 | `src/ui/settings_window/settings_tab.rs` | The *Settings* tab |
-| `src/ui/settings_window/widgets.rs` | Controls shared by the tabs: toggles, buttons, segmented controls |
+| `src/ui/settings_window/widgets.rs` | Controls shared by the tabs: toggles, buttons, segmented controls, scrollbar |
 | `src/ui/tray.rs` | Tray icon and tray menu |
 | `src/ui/window.rs` | Window class, message loop, message dispatch |
 

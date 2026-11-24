@@ -17,6 +17,15 @@ pub(crate) struct RectI {
 }
 
 impl RectI {
+    /// The same rectangle moved down by `dy` (up when negative).
+    pub(crate) fn shifted(self, dy: i32) -> RectI {
+        RectI {
+            top: self.top + dy,
+            bottom: self.bottom + dy,
+            ..self
+        }
+    }
+
     pub(crate) fn contains(self, x: i32, y: i32) -> bool {
         x >= self.left && x <= self.right && y >= self.top && y <= self.bottom
     }
@@ -346,3 +355,22 @@ pub(crate) fn rgb(red: u8, green: u8, blue: u8) -> u32 {
     red as u32 | ((green as u32) << 8) | ((blue as u32) << 16)
 }
 
+
+/// Single line, left-aligned and vertically centered in `rect`, cut with "..."
+/// when it does not fit.
+pub(crate) unsafe fn text_left_ellipsis(dc: HDC, text: &str, rect: RectI) {
+    let mut r = RECT {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    };
+    let wide = wide_null(text);
+    DrawTextW(
+        dc,
+        wide.as_ptr(),
+        -1,
+        &mut r,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+    );
+}

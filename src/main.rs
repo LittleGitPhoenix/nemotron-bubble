@@ -56,7 +56,7 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, ClientToScreen, CreateBitmap,
     CreateFontW, CreateRoundRectRgn, DEFAULT_CHARSET,
-    DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_EDITCONTROL, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_TOP, DT_VCENTER,
+    DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_EDITCONTROL, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_TOP, DT_VCENTER,
     DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD,
     HDC, IntersectClipRect, InvalidateRect, OUT_DEFAULT_PRECIS, PAINTSTRUCT, SelectClipRgn,
     SelectObject,
@@ -143,6 +143,8 @@ pub(crate) struct AppState {
     pub(crate) capturing_hotkey: AtomicBool,
     /// Active tab of the settings window (TAB_HISTORY / TAB_MODEL / TAB_SETTINGS).
     pub(crate) settings_tab: AtomicUsize,
+    /// Scroll offset (px) of the Settings tab.
+    pub(crate) settings_scroll: AtomicI32,
     pub(crate) enter_pending: AtomicBool,
     pub(crate) drag: Mutex<Option<DragState>>,
     pub(crate) settings: Mutex<AppSettings>,
@@ -235,6 +237,7 @@ pub(crate) fn run_app() -> Result<()> {
         copied_flash: Mutex::new(None),
         capturing_hotkey: AtomicBool::new(false),
         settings_tab: AtomicUsize::new(TAB_HISTORY),
+        settings_scroll: AtomicI32::new(0),
         enter_pending: AtomicBool::new(false),
         drag: Mutex::new(None),
         settings: Mutex::new(settings),
@@ -274,7 +277,7 @@ pub(crate) fn run_app() -> Result<()> {
         run_window(app).context("failed to run window")?;
     }
 
-    AUDIO_STREAM.with(|slot| slot.borrow_mut().take());
+    close_audio_capture();
     Ok(())
 }
 

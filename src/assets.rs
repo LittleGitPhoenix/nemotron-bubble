@@ -92,8 +92,12 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
                     scroll: 0,
                     copied: None,
                 };
+                let settings_view = SettingsTabView {
+                    scroll: 0,
+                    microphone_in_use: Some("Microphone (USB Audio)".to_string()),
+                };
                 unsafe {
-                    render_settings_canvas(&mut canvas, &settings, status, &view, false, tab)
+                    render_settings_canvas(&mut canvas, &settings, status, &view, &settings_view, false, tab)
                 };
                 let rgba = settings_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
                 write_png(&dir.join(name), cw as u32, ch as u32, &rgba)?;

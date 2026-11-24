@@ -172,6 +172,6 @@ pub(crate) unsafe fn draw_model_text(dc: HDC, settings: &AppSettings, model_stat
 
     // Preload toggle
     if let Some(row) = rows.iter().find(|row| row.id == SETTINGS_TOGGLE_PRELOAD) {
-        draw_toggle_text(dc, row);
+        draw_toggle_text(dc, row, settings_toggle_rect(row.id));
     }
 }
