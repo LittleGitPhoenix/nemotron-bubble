@@ -78,6 +78,16 @@ On first start the choice is detected: **Predefined** if one of its folders is s
 with *Preload Nemotron* on, the new one loads right away. The line under *Speech model* shows
 what is loaded, as reported by the model itself.
 
+### Processing (GPU or CPU)
+
+Under **Processing** choose where the model runs: **CPU** (default) the processor, **GPU**
+DirectML (any DirectX 12 graphics adapter, including integrated ones), and **Auto** tries the
+GPU first and falls back to the CPU. Switching reloads the model. The line under *Speech
+model* shows the device in use, and each entry in the recent dictations (and in
+`config\history.json`) records the device and the average processing time per 560 ms audio
+chunk, so you can compare both on your machine. An integrated GPU is not necessarily faster
+than the CPU. `--self-test` prints the same measurement.
+
 ### Language (multilingual model)
 
 By default the multilingual model works out the spoken language itself. If you know the
