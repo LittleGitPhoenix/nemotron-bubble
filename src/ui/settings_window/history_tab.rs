@@ -126,16 +126,8 @@ pub(crate) fn draw_history_shapes(buf: &mut [u32], cw: i32, ch: i32, list: &Hist
     let scroll = list.layout.scroll;
     draw_button_bg(buf, cw, ch, settings_clear_history_rect(), false);
     // thin scrollbar, only when the list is longer than the view
-    if content_h > view_h {
-        let track_x = (SETTINGS_INNER_RIGHT + 4) as f32;
-        let track_top = HISTORY_LIST_TOP as f32;
-        let track_h = view_h as f32;
-        let thumb_h = (track_h * view_h as f32 / content_h as f32).max(24.0);
-        let thumb_top = track_top
-            + (track_h - thumb_h) * scroll as f32 / (content_h - view_h) as f32;
-        fill_round_rect(buf, cw, ch, track_x, track_top, 4.0, track_h, 2.0, (40, 44, 54), (40, 44, 54), 1.0);
-        fill_round_rect(buf, cw, ch, track_x, thumb_top, 4.0, thumb_h, 2.0, (92, 100, 116), (92, 100, 116), 1.0);
-    }
+    let track_x = SETTINGS_INNER_RIGHT + 4;
+    draw_scrollbar(buf, cw, ch, track_x, HISTORY_LIST_TOP, view_h, content_h, scroll);
 }
 
 /// Pass 2 of the History tab: title, trash glyph and the entries. Records the

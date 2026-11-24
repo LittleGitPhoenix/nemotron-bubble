@@ -33,6 +33,9 @@ pub(crate) struct AppSettings {
     pub(crate) compute: ComputeChoice,
     /// Screen position of the floating bubble (one of six presets).
     pub(crate) bubble_position: BubblePosition,
+    /// Input device by its Windows name, e.g. "Microphone (USB Audio)". Empty:
+    /// follow the Windows default input device.
+    pub(crate) microphone: String,
 }
 
 /// Preset positions of the floating bubble, in the primary monitor's work area
@@ -278,6 +281,7 @@ impl Default for AppSettings {
             language: "auto".to_string(),
             compute: ComputeChoice::Cpu,
             bubble_position: BubblePosition::BottomRight,
+            microphone: String::new(),
         }
     }
 }

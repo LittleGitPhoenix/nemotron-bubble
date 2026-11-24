@@ -17,6 +17,7 @@ ___
 - GPU processing via DirectML, which works with any DirectX 12 graphics adapter. The new *Processing* setting offers *CPU* (default), *GPU* and *Auto*.
 - Each history entry records the device and the average processing time per 560 ms audio chunk.
 - Six preset positions for the floating bubble (top or bottom, each left, center or right). The choice is saved in `settings.json`.
+- Microphone selection on the *Settings* tab. *Windows default* follows the Windows default input device, and a change there is picked up at the next dictation start without restarting the app. A selected device that is not connected falls back to the Windows default until it is back.
 - A log file `log\nemotron-bubble.log` with startup, microphone, model loading and all errors. The same lines go to `OutputDebugString` for DebugView.
 - Messages for a missing microphone and for a model that fails to load.
 - The new `--self-test` parameter prints to the console and reports the device and the processing time per chunk.
@@ -27,6 +28,7 @@ ___
 
 - The main window is redesigned. It is about half as wide, splits into the tabs *History*, *Model* and *Settings*, and opens next to the bubble or the tray icon, depending on what was clicked. The close button is the Windows ✕.
 - The history list is drawn by the app itself. Each entry has a copy icon and a smaller grey header line, and the list scrolls with the mouse wheel. A trash button replaces *Clear*, and *Copy Latest* is gone.
+- The *Settings* tab scrolls with the mouse wheel and shows a scrollbar, so the window keeps its height.
 - The app is portable. Settings, history and sounds are stored in `config\` and the logs in `log\` next to the exe instead of in `%APPDATA%`.
 - The bubble keeps a 10 pixel margin to the screen edges and the taskbar and its shadow is smaller so it no longer overlaps the taskbar.
 - The Space key is labelled *Space* in the shortcut instead of its localized Windows name.

@@ -1,4 +1,4 @@
-//! Microphone capture and resampling to 16 kHz.
+//! Microphone selection, capture and resampling to 16 kHz.
 
 use crate::*;
 
@@ -15,23 +15,75 @@ thread_local! {
     // The live microphone stream. cpal streams are not Send, so it lives on the
     // UI thread (which is also the main thread) and is (re)opened lazily there.
     pub(crate) static AUDIO_STREAM: RefCell<Option<cpal::Stream>> = const { RefCell::new(None) };
+    // Windows name of the device AUDIO_STREAM records from.
+    pub(crate) static OPEN_MICROPHONE: RefCell<Option<String>> = const { RefCell::new(None) };
+    // The device names offered by the last microphone popup menu, in menu order.
+    pub(crate) static MICROPHONE_MENU: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Make sure a working microphone stream is open. Returns false (after logging
-/// and notifying the user) when no usable input device is available. Must run on
-/// the main/UI thread, which owns the stream.
+/// Names of all active input devices, as Windows shows them.
+pub(crate) fn input_device_names() -> Vec<String> {
+    match cpal::default_host().input_devices() {
+        Ok(devices) => devices.filter_map(|device| device.name().ok()).collect(),
+        Err(err) => {
+            log_error(&format!("Could not list microphones: {err}"));
+            Vec::new()
+        }
+    }
+}
+
+/// Name of the Windows default input device, if there is one.
+pub(crate) fn default_input_device_name() -> Option<String> {
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|device| device.name().ok())
+}
+
+/// Name of the device the open stream records from (None when no stream is open).
+pub(crate) fn open_microphone_name() -> Option<String> {
+    OPEN_MICROPHONE.with(|name| name.borrow().clone())
+}
+
+/// True when the open stream no longer records from the device the settings ask
+/// for: the Windows default changed (with "Windows default" selected), or the
+/// selected device is connected again after a fallback to the default.
+fn microphone_choice_changed(app: &Arc<AppState>) -> bool {
+    let wanted = settings_snapshot(app).microphone;
+    let open = open_microphone_name().unwrap_or_default();
+    if wanted.is_empty() {
+        default_input_device_name().is_some_and(|name| name != open)
+    } else if wanted == open {
+        false
+    } else {
+        input_device_names().iter().any(|name| *name == wanted)
+    }
+}
+
+/// Close the microphone stream. The next ensure_audio_capture opens it again.
+pub(crate) fn close_audio_capture() {
+    AUDIO_STREAM.with(|slot| slot.borrow_mut().take());
+    OPEN_MICROPHONE.with(|name| name.borrow_mut().take());
+}
+
+/// Make sure a working microphone stream is open, on the device the settings
+/// ask for. Returns false (after logging and notifying the user) when no usable
+/// input device is available. Must run on the main/UI thread, which owns the stream.
 pub(crate) fn ensure_audio_capture(app: &Arc<AppState>) -> bool {
-    let healthy = AUDIO_STREAM.with(|slot| slot.borrow().is_some()) && !MIC_FAILED.load(Ordering::SeqCst);
-    if healthy {
-        return true;
+    let open = AUDIO_STREAM.with(|slot| slot.borrow().is_some());
+    if open && !MIC_FAILED.load(Ordering::SeqCst) {
+        if !microphone_choice_changed(app) {
+            return true;
+        }
+        log_info("The microphone to use has changed. Reopening the input stream.");
     }
     // Drop a stream whose device has gone away before opening a fresh one.
-    AUDIO_STREAM.with(|slot| slot.borrow_mut().take());
+    close_audio_capture();
     MIC_FAILED.store(false, Ordering::SeqCst);
 
     match start_audio_capture(app.clone()) {
-        Ok(stream) => {
+        Ok((stream, name)) => {
             AUDIO_STREAM.with(|slot| *slot.borrow_mut() = Some(stream));
+            OPEN_MICROPHONE.with(|slot| *slot.borrow_mut() = Some(name));
             true
         }
         Err(err) => {
@@ -53,15 +105,75 @@ pub(crate) fn ensure_audio_capture(app: &Arc<AppState>) -> bool {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Diagnostics: log file + DebugView + user-facing message boxes.
-// ---------------------------------------------------------------------------
+/// Use the input device `name` (empty: the Windows default), save the choice
+/// and reopen the stream right away. Refused while dictating.
+pub(crate) fn select_microphone(app: &Arc<AppState>, name: String) {
+    if app.recording.load(Ordering::SeqCst) {
+        update_ui(app, |ui| {
+            ui.status = "Stop dictation before switching the microphone.".to_string();
+        });
+        return;
+    }
+    let settings = {
+        let mut settings = app
+            .settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        settings.microphone = name;
+        settings.clone()
+    };
+    save_settings(&settings);
+    log_info(&format!("Microphone changed to {}", microphone_label(&settings.microphone)));
 
-pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<cpal::Stream> {
+    close_audio_capture();
+    if ensure_audio_capture(app) {
+        let in_use = open_microphone_name().unwrap_or_default();
+        update_ui(app, |ui| {
+            ui.status = format!("Microphone: {in_use}.");
+        });
+    }
+}
+
+/// Entry `index` of the microphone popup menu: 0 is "Windows default", the
+/// others are the devices listed when the menu was shown.
+pub(crate) fn select_microphone_menu_item(app: &Arc<AppState>, index: usize) {
+    let name = if index == 0 {
+        Some(String::new())
+    } else {
+        MICROPHONE_MENU.with(|names| names.borrow().get(index - 1).cloned())
+    };
+    if let Some(name) = name {
+        select_microphone(app, name);
+    }
+}
+
+/// Display text of a microphone setting.
+pub(crate) fn microphone_label(name: &str) -> &str {
+    if name.is_empty() { "Windows default" } else { name }
+}
+
+/// The input device the settings ask for, or the Windows default when that one
+/// is not connected. The setting is kept, so the device is used again once it is back.
+fn pick_input_device(app: &Arc<AppState>, host: &cpal::Host) -> Result<cpal::Device> {
+    let wanted = settings_snapshot(app).microphone;
+    if !wanted.is_empty() {
+        let found = host
+            .input_devices()
+            .ok()
+            .and_then(|mut devices| devices.find(|device| device.name().is_ok_and(|name| name == wanted)));
+        if let Some(device) = found {
+            return Ok(device);
+        }
+        log_error(&format!("Microphone '{wanted}' is not connected. Using the Windows default."));
+    }
+    host.default_input_device()
+        .ok_or_else(|| anyhow!("no default microphone found"))
+}
+
+/// Open and start the input stream. Returns it with the name of its device.
+pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<(cpal::Stream, String)> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| anyhow!("no default microphone found"))?;
+    let device = pick_input_device(&app, &host)?;
     let device_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
     let input_config = device
         .default_input_config()
@@ -128,7 +240,7 @@ pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<cpal::Stream> {
     stream
         .play()
         .with_context(|| format!("could not start recording from '{device_name}'"))?;
-    Ok(stream)
+    Ok((stream, device_name))
 }
 
 pub(crate) struct InputCallback {

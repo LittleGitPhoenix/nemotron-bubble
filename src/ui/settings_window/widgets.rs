@@ -13,9 +13,8 @@ pub(crate) unsafe fn section_heading(dc: HDC, top: i32, title: &str, detail: &st
     text_left(dc, detail, SETTINGS_INNER_LEFT, top + 20, width, 18);
 }
 
-/// Title and detail text of a toggle row (the switch itself is drawn in pass 1).
-pub(crate) unsafe fn draw_toggle_text(dc: HDC, row: &SettingRow) {
-    let rect = settings_toggle_rect(row.id);
+/// Title and detail text of a toggle row at `rect` (the switch itself is drawn in pass 1).
+pub(crate) unsafe fn draw_toggle_text(dc: HDC, row: &SettingRow, rect: RectI) {
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(233, 238, 244));
     text_left(dc, row.title, rect.left + 8, rect.top + 1, 232, 20);
@@ -117,3 +116,18 @@ pub(crate) fn segment_rect(track: RectI, index: usize, count: usize) -> RectI {
     }
 }
 
+
+/// Thin vertical scrollbar (track and thumb) at `x`, spanning `top` to `top + view_h`.
+/// Drawn only when the content is taller than the view.
+pub(crate) fn draw_scrollbar(buf: &mut [u32], cw: i32, ch: i32, x: i32, top: i32, view_h: i32, content_h: i32, scroll: i32) {
+    if content_h <= view_h {
+        return;
+    }
+    let track_x = x as f32;
+    let track_top = top as f32;
+    let track_h = view_h as f32;
+    let thumb_h = (track_h * view_h as f32 / content_h as f32).max(24.0);
+    let thumb_top = track_top + (track_h - thumb_h) * scroll as f32 / (content_h - view_h) as f32;
+    fill_round_rect(buf, cw, ch, track_x, track_top, 4.0, track_h, 2.0, (40, 44, 54), (40, 44, 54), 1.0);
+    fill_round_rect(buf, cw, ch, track_x, thumb_top, 4.0, thumb_h, 2.0, (92, 100, 116), (92, 100, 116), 1.0);
+}

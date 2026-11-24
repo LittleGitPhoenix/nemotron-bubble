@@ -203,10 +203,15 @@ pub(crate) unsafe extern "system" fn wnd_proc(
         }
         WM_MOUSEWHEEL => {
             if let Some(app) = APP.get() {
-                if is_settings_window(hwnd) && app.settings_tab.load(Ordering::SeqCst) == TAB_HISTORY {
+                if is_settings_window(hwnd) {
                     // high word of wparam: signed wheel delta, 120 per notch
                     let delta = ((wparam >> 16) & 0xFFFF) as u16 as i16 as i32;
-                    scroll_history(app, -delta * HISTORY_WHEEL_STEP / 120);
+                    let pixels = -delta * HISTORY_WHEEL_STEP / 120;
+                    match app.settings_tab.load(Ordering::SeqCst) {
+                        TAB_HISTORY => scroll_history(app, pixels),
+                        TAB_SETTINGS => scroll_settings_tab(app, pixels),
+                        _ => {}
+                    }
                 }
             }
             0
@@ -262,6 +267,11 @@ pub(crate) fn handle_command(command: usize) {
         id if (IDM_BUBBLE_POS_BASE..IDM_BUBBLE_POS_BASE + BubblePosition::ALL.len()).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_bubble_position(app, BubblePosition::ALL[id - IDM_BUBBLE_POS_BASE]);
+            }
+        }
+        id if (IDM_MIC_BASE..IDM_MIC_BASE + IDM_MIC_MAX).contains(&id) => {
+            if let Some(app) = APP.get() {
+                select_microphone_menu_item(app, id - IDM_MIC_BASE);
             }
         }
         id if (IDM_COMPUTE_BASE..IDM_COMPUTE_BASE + ComputeChoice::ALL.len()).contains(&id) => {
