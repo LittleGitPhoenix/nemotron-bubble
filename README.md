@@ -134,7 +134,7 @@ the app removes when you turn that setting off.
 | Start / stop dictation | your shortcut (default `Ctrl+Space`) |
 | Change the shortcut | open settings, click *Global shortcut*, press the new combo |
 | Open / close settings | click the bubble **or** the tray icon |
-| Move the bubble | drag it |
+| Move the bubble | drag it (until the next start), or pick a preset under *Settings → Bubble position* (saved) |
 | Tray menu (start, show/hide, quit) | right-click the tray icon |
 
 ## How it works

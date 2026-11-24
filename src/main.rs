@@ -34,7 +34,8 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BitBlt,
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, GdiFlush, GetDC, HBITMAP,
-    ReleaseDC, SRCCOPY,
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+    MonitorFromPoint, ReleaseDC, SRCCOPY,
 };
 use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
 use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
@@ -94,7 +95,7 @@ const WM_UI_UPDATE: u32 = WM_APP + 1;
 
 // Floating bubble: a soft-shadowed pill rendered with per-pixel alpha. The window
 // is larger than the pill so the drop shadow has room to fall off smoothly.
-const BUBBLE_MARGIN: i32 = 16;
+const BUBBLE_MARGIN: i32 = 10;
 const PILL_W: i32 = 120;
 const PILL_H: i32 = 54;
 const WIDTH: i32 = PILL_W + BUBBLE_MARGIN * 2;
@@ -106,7 +107,7 @@ const ANIM_INTERVAL_MS: u32 = 33; // ~30 fps
 // Settings window: header, a tab bar (History | Model | Settings) and one card
 // that shows the active tab. The width fits one column of settings rows.
 const SETTINGS_WIDTH: i32 = 392;
-const SETTINGS_HEIGHT: i32 = 768;
+const SETTINGS_HEIGHT: i32 = 816;
 // Space below the card; holds the version label at the bottom right.
 const SETTINGS_FOOTER_H: i32 = 36;
 const SETTINGS_CARD_LEFT: i32 = 20;
@@ -139,6 +140,8 @@ const LANGUAGE_ROW_TOP: i32 = 328;
 const PRELOAD_ROW_TOP: i32 = 384;
 // Settings tab
 const SETTINGS_TAB_TOGGLES_TOP: i32 = 180;
+// The bubble position row follows the last toggle.
+const BUBBLE_POSITION_ROW_TOP: i32 = SETTINGS_TAB_TOGGLES_TOP + SETTINGS_TAB_TOGGLES.len() as i32 * 49;
 const NEMOTRON_SAMPLE_RATE: f64 = 16_000.0;
 const NEMOTRON_CHUNK_SIZE: usize = 8_960; // 560 ms at 16 kHz.
 
@@ -152,6 +155,8 @@ const IDM_MODEL_BASE: usize = 1100;
 const IDM_LANG_BASE: usize = 1200;
 // Tray "Processing" submenu: one id per ComputeChoice, in ComputeChoice::ALL order.
 const IDM_COMPUTE_BASE: usize = 1300;
+// Bubble position popup menu: one id per BubblePosition, in BubblePosition::ALL order.
+const IDM_BUBBLE_POS_BASE: usize = 1400;
 /// App version from Cargo.toml; also embedded in the exe's version resource (build.rs).
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SETTINGS_TOGGLE_STARTUP: usize = 2001;
@@ -228,6 +233,72 @@ struct AppSettings {
     language: String,
     /// Where the model runs: GPU (DirectML), CPU, or Auto (GPU, else CPU).
     compute: ComputeChoice,
+    /// Screen position of the floating bubble (one of six presets).
+    bubble_position: BubblePosition,
+}
+
+/// Preset positions of the floating bubble, in the primary monitor's work area
+/// (the screen minus the taskbar). Stored as e.g. "bottom-center" in settings.json.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+enum BubblePosition {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    BottomLeft,
+    BottomCenter,
+    #[default]
+    BottomRight,
+}
+
+impl BubblePosition {
+    /// Menu order.
+    const ALL: [BubblePosition; 6] = [
+        BubblePosition::TopLeft,
+        BubblePosition::TopCenter,
+        BubblePosition::TopRight,
+        BubblePosition::BottomLeft,
+        BubblePosition::BottomCenter,
+        BubblePosition::BottomRight,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            BubblePosition::TopLeft => "Top left",
+            BubblePosition::TopCenter => "Top center",
+            BubblePosition::TopRight => "Top right",
+            BubblePosition::BottomLeft => "Bottom left",
+            BubblePosition::BottomCenter => "Bottom center",
+            BubblePosition::BottomRight => "Bottom right",
+        }
+    }
+
+    /// The settings.json spelling.
+    fn key(self) -> &'static str {
+        match self {
+            BubblePosition::TopLeft => "top-left",
+            BubblePosition::TopCenter => "top-center",
+            BubblePosition::TopRight => "top-right",
+            BubblePosition::BottomLeft => "bottom-left",
+            BubblePosition::BottomCenter => "bottom-center",
+            BubblePosition::BottomRight => "bottom-right",
+        }
+    }
+}
+
+impl From<String> for BubblePosition {
+    fn from(value: String) -> Self {
+        BubblePosition::ALL
+            .into_iter()
+            .find(|position| position.key().eq_ignore_ascii_case(value.trim()))
+            .unwrap_or_default()
+    }
+}
+
+impl From<BubblePosition> for String {
+    fn from(value: BubblePosition) -> Self {
+        value.key().to_string()
+    }
 }
 
 /// The "Processing" setting. Stored as a plain string in settings.json; unknown
@@ -408,6 +479,7 @@ impl Default for AppSettings {
             model_dir: String::new(),
             language: "auto".to_string(),
             compute: ComputeChoice::Cpu,
+            bubble_position: BubblePosition::BottomRight,
         }
     }
 }
@@ -1006,21 +1078,71 @@ fn select_language(app: &Arc<AppState>, code: &'static str) {
 
 /// Popup menu under the settings window's Language button.
 unsafe fn show_language_menu(app: &Arc<AppState>) {
-    let hwnd = settings_hwnd_from_app(app);
     let menu = build_language_menu(&settings_snapshot(app), app.recording.load(Ordering::SeqCst));
-    if hwnd == null_mut() || menu == null_mut() {
+    show_menu_below(app, menu, settings_language_rect());
+}
+
+/// Popup menu with the bubble position presets, current one checked.
+unsafe fn show_bubble_position_menu(app: &Arc<AppState>) {
+    let menu = CreatePopupMenu();
+    if menu == null_mut() {
         return;
     }
-    let button = settings_language_rect();
+    let current = settings_snapshot(app).bubble_position;
+    for (index, position) in BubblePosition::ALL.iter().enumerate() {
+        let mut flags = MF_STRING;
+        if *position == current {
+            flags |= MF_CHECKED;
+        }
+        let text = wide_null(position.label());
+        AppendMenuW(menu, flags, IDM_BUBBLE_POS_BASE + index, text.as_ptr());
+        if index == 2 {
+            AppendMenuW(menu, MF_SEPARATOR, 0, null()); // between top and bottom row
+        }
+    }
+    show_menu_below(app, menu, settings_bubble_position_rect());
+}
+
+/// Show `menu` below a button of the settings window and destroy it afterwards.
+/// The choice arrives as WM_COMMAND and is handled by handle_command.
+unsafe fn show_menu_below(app: &Arc<AppState>, menu: HMENU, button: RectI) {
+    let hwnd = settings_hwnd_from_app(app);
+    if hwnd == null_mut() || menu == null_mut() {
+        if menu != null_mut() {
+            DestroyMenu(menu);
+        }
+        return;
+    }
     let mut point = POINT {
         x: button.left,
         y: button.bottom + 2,
     };
     ClientToScreen(hwnd, &mut point);
     SetForegroundWindow(hwnd);
-    // The choice arrives as WM_COMMAND and is handled by handle_command.
     TrackPopupMenu(menu, 0, point.x, point.y, 0, hwnd, null());
     DestroyMenu(menu);
+}
+
+/// Move the floating bubble to another preset position and save it.
+fn select_bubble_position(app: &Arc<AppState>, position: BubblePosition) {
+    let settings = {
+        let mut settings = app
+            .settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        settings.bubble_position = position;
+        settings.clone()
+    };
+    save_settings(&settings);
+    unsafe {
+        let hwnd = hwnd_from_app(app);
+        if hwnd != null_mut() {
+            place_window(hwnd);
+        }
+    }
+    update_ui(app, |ui| {
+        ui.status = format!("Bubble position: {}.", position.label());
+    });
 }
 
 /// The Language menu (settings popup and tray submenu): current one checked,
@@ -1385,7 +1507,7 @@ unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
         SetLayeredWindowAttributes(settings_hwnd, 0, 246, LWA_ALPHA);
         app.settings_hwnd
             .store(settings_hwnd as isize, Ordering::SeqCst);
-        place_settings_window(settings_hwnd);
+        place_settings_window(settings_hwnd, SettingsOrigin::Tray); // re-placed whenever shown
         apply_settings_rounding(settings_hwnd);
         create_history_edit(settings_hwnd, &app);
         ShowWindow(settings_hwnd, SW_HIDE);
@@ -1490,7 +1612,7 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_TRAYICON => {
             match lparam as u32 {
-                WM_LBUTTONUP => toggle_settings_window(),
+                WM_LBUTTONUP => toggle_settings_window(SettingsOrigin::Tray),
                 WM_RBUTTONUP => show_tray_menu(hwnd),
                 _ => {}
             }
@@ -2857,6 +2979,11 @@ fn handle_command(command: usize) {
                 select_language(app, LANGUAGES[id - IDM_LANG_BASE].0);
             }
         }
+        id if (IDM_BUBBLE_POS_BASE..IDM_BUBBLE_POS_BASE + BubblePosition::ALL.len()).contains(&id) => {
+            if let Some(app) = APP.get() {
+                select_bubble_position(app, BubblePosition::ALL[id - IDM_BUBBLE_POS_BASE]);
+            }
+        }
         id if (IDM_COMPUTE_BASE..IDM_COMPUTE_BASE + ComputeChoice::ALL.len()).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_compute(app, ComputeChoice::ALL[id - IDM_COMPUTE_BASE]);
@@ -2881,7 +3008,7 @@ fn handle_click(x: i32, y: i32) {
         return;
     };
     if settings_snapshot(app).bubble_click_opens_settings {
-        toggle_settings_window();
+        toggle_settings_window(SettingsOrigin::Bubble);
     } else {
         toggle_recording();
     }
@@ -3016,6 +3143,9 @@ fn handle_settings_click(x: i32, y: i32) {
                     toggle_setting(app, id);
                     return;
                 }
+            }
+            if settings_bubble_position_rect().contains(x, y) {
+                unsafe { show_bubble_position_menu(app) };
             }
         }
     }
@@ -3412,8 +3542,9 @@ fn paint_bubble_into(
     let ph = PILL_H as f32;
     let radius = ph / 2.0;
 
-    // soft drop shadow, nudged down a touch
-    fill_shadow(buf, cw, ch, px - 1.0, py + 4.0, pw + 2.0, ph + 2.0, radius, 13.0, 0.45);
+    // soft drop shadow, nudged down a touch; it must stay within BUBBLE_MARGIN
+    // (sides: 1 + blur = 9 px, bottom: 2 + blur = 10 px) or it gets clipped
+    fill_shadow(buf, cw, ch, px - 1.0, py + 1.0, pw + 2.0, ph + 1.0, radius, 8.0, 0.45);
 
     // glassy pill body with a subtle top-to-bottom gradient
     fill_round_rect(buf, cw, ch, px, py, pw, ph, radius, (46, 51, 62), (26, 29, 36), 0.98);
@@ -3733,6 +3864,7 @@ unsafe fn render_settings_canvas(
                 for row in rows.iter().filter(|row| row.id != SETTINGS_TOGGLE_PRELOAD) {
                     draw_toggle(buf, cw, ch, settings_toggle_rect(row.id), row.enabled);
                 }
+                draw_button_bg(buf, cw, ch, settings_bubble_position_rect(), false);
             }
         }
     }
@@ -3889,6 +4021,21 @@ unsafe fn render_settings_canvas(
             for row in rows.iter().filter(|row| row.id != SETTINGS_TOGGLE_PRELOAD) {
                 draw_toggle_text(dc, row);
             }
+
+            // bubble position: label + detail on the left, popup button on the right
+            SelectObject(dc, ui_font() as _);
+            SetTextColor(dc, rgb(233, 238, 244));
+            text_left(dc, "Bubble position", 40, BUBBLE_POSITION_ROW_TOP + 1, 160, 20);
+            SelectObject(dc, small_font() as _);
+            SetTextColor(dc, rgb(124, 134, 148));
+            text_left(dc, "Preset spot on the screen.", 40, BUBBLE_POSITION_ROW_TOP + 21, 160, 18);
+            SelectObject(dc, ui_font() as _);
+            SetTextColor(dc, rgb(245, 248, 252));
+            text_center(
+                dc,
+                &format!("{}  \u{25BE}", settings.bubble_position.label()),
+                settings_bubble_position_rect(),
+            );
         }
     }
 
@@ -4044,21 +4191,119 @@ unsafe fn text_center(dc: HDC, text: &str, rect: RectI) {
     );
 }
 
+/// The work area (screen minus taskbar) of the monitor containing `point`, or
+/// the primary monitor's for None.
+unsafe fn work_area(point: Option<POINT>) -> RECT {
+    let monitor = match point {
+        Some(point) => MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST),
+        None => MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
+    };
+    let mut info: MONITORINFO = std::mem::zeroed();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if monitor != null_mut() && GetMonitorInfoW(monitor, &mut info) != 0 {
+        info.rcWork
+    } else {
+        RECT {
+            left: 0,
+            top: 0,
+            right: GetSystemMetrics(SM_CXSCREEN),
+            bottom: GetSystemMetrics(SM_CYSCREEN),
+        }
+    }
+}
+
+/// Move the floating bubble to its preset position on the primary monitor.
 unsafe fn place_window(hwnd: HWND) {
-    let screen_w = GetSystemMetrics(SM_CXSCREEN);
-    let screen_h = GetSystemMetrics(SM_CYSCREEN);
-    let x = (screen_w - WIDTH - 24).max(0);
-    let y = (screen_h - HEIGHT - 88).max(0);
+    let position = APP
+        .get()
+        .map(|app| settings_snapshot(app).bubble_position)
+        .unwrap_or_default();
+    let work = work_area(None);
+    // Margin between the visible pill and the screen edge / taskbar. The window
+    // is BUBBLE_MARGIN larger than the pill on every side (transparent shadow
+    // room), so the window itself sits that much closer; with PILL_GAP equal to
+    // BUBBLE_MARGIN the window edge lands exactly on the work-area edge.
+    const PILL_GAP: i32 = 10;
+    const GAP: i32 = PILL_GAP - BUBBLE_MARGIN;
+    let x = match position {
+        BubblePosition::TopLeft | BubblePosition::BottomLeft => work.left + GAP,
+        BubblePosition::TopCenter | BubblePosition::BottomCenter => {
+            work.left + (work.right - work.left - WIDTH) / 2
+        }
+        BubblePosition::TopRight | BubblePosition::BottomRight => work.right - WIDTH - GAP,
+    };
+    let y = match position {
+        BubblePosition::TopLeft | BubblePosition::TopCenter | BubblePosition::TopRight => work.top + GAP,
+        _ => work.bottom - HEIGHT - GAP,
+    };
     // Position only — visibility is controlled separately so the first frame is
     // rendered (via UpdateLayeredWindow) before the window is shown.
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, WIDTH, HEIGHT, SWP_NOACTIVATE);
 }
 
-unsafe fn place_settings_window(hwnd: HWND) {
-    let screen_w = GetSystemMetrics(SM_CXSCREEN);
-    let screen_h = GetSystemMetrics(SM_CYSCREEN);
-    let x = (screen_w - SETTINGS_WIDTH - 32).max(0);
-    let y = ((screen_h - SETTINGS_HEIGHT) / 2).max(0);
+/// A zero-size rectangle at the mouse cursor.
+unsafe fn cursor_rect() -> RECT {
+    let mut point: POINT = std::mem::zeroed();
+    GetCursorPos(&mut point);
+    RECT {
+        left: point.x,
+        top: point.y,
+        right: point.x,
+        bottom: point.y,
+    }
+}
+
+/// What opened the settings window; decides where it appears.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsOrigin {
+    /// A click on the floating bubble: open next to the bubble.
+    Bubble,
+    /// A click on the tray icon: open next to the tray (at the cursor).
+    Tray,
+}
+
+/// Position the settings window next to what opened it, kept inside that
+/// monitor's work area: above the anchor when it is in the lower half of the
+/// screen (bubble at the bottom, taskbar at the bottom), otherwise below it.
+unsafe fn place_settings_window(hwnd: HWND, origin: SettingsOrigin) {
+    const GAP: i32 = 8;
+    // Anchor rectangle: the bubble's pill, or a point at the cursor (tray click).
+    let anchor = match origin {
+        SettingsOrigin::Bubble => {
+            let bubble = APP.get().map(|app| hwnd_from_app(app)).unwrap_or(null_mut());
+            let mut rect: RECT = std::mem::zeroed();
+            if bubble != null_mut() && IsWindowVisible(bubble) != 0 && GetWindowRect(bubble, &mut rect) != 0 {
+                // Ignore the transparent shadow margin around the pill.
+                RECT {
+                    left: rect.left + BUBBLE_MARGIN,
+                    top: rect.top + BUBBLE_MARGIN,
+                    right: rect.right - BUBBLE_MARGIN,
+                    bottom: rect.bottom - BUBBLE_MARGIN,
+                }
+            } else {
+                cursor_rect()
+            }
+        }
+        SettingsOrigin::Tray => cursor_rect(),
+    };
+    let center = POINT {
+        x: (anchor.left + anchor.right) / 2,
+        y: (anchor.top + anchor.bottom) / 2,
+    };
+    let work = work_area(Some(center));
+
+    let x = (center.x - SETTINGS_WIDTH / 2)
+        .min(work.right - SETTINGS_WIDTH - GAP)
+        .max(work.left + GAP);
+    let in_lower_half = center.y > (work.top + work.bottom) / 2;
+    let y = if in_lower_half {
+        anchor.top - SETTINGS_HEIGHT - GAP
+    } else {
+        anchor.bottom + GAP
+    }
+    .min(work.bottom - SETTINGS_HEIGHT - GAP)
+    .max(work.top + GAP);
+
     SetWindowPos(
         hwnd,
         HWND_TOPMOST,
@@ -4078,7 +4323,7 @@ unsafe fn apply_settings_rounding(hwnd: HWND) {
 }
 
 /// Open the settings window if hidden, close it if already showing.
-fn toggle_settings_window() {
+fn toggle_settings_window(origin: SettingsOrigin) {
     let Some(app) = APP.get() else {
         return;
     };
@@ -4091,7 +4336,7 @@ fn toggle_settings_window() {
             cancel_hotkey_capture(app);
             ShowWindow(hwnd, SW_HIDE);
         } else {
-            place_settings_window(hwnd);
+            place_settings_window(hwnd, origin);
             ShowWindow(hwnd, SW_SHOW);
             SetForegroundWindow(hwnd);
         }
@@ -4332,7 +4577,8 @@ fn settings_shortcut_rect() -> RectI {
     }
 }
 
-/// The toggles of the Settings tab, top to bottom.
+/// The toggles of the Settings tab, top to bottom. The bubble settings come
+/// last, followed by the bubble position row.
 const SETTINGS_TAB_TOGGLES: [usize; 11] = [
     SETTINGS_TOGGLE_STARTUP,
     SETTINGS_TOGGLE_LIVE_TYPE,
@@ -4340,12 +4586,22 @@ const SETTINGS_TAB_TOGGLES: [usize; 11] = [
     SETTINGS_TOGGLE_FINAL_PASTE,
     SETTINGS_TOGGLE_SOUNDS,
     SETTINGS_TOGGLE_WAVEFORM,
-    SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS,
-    SETTINGS_TOGGLE_FLOATING_BUBBLE,
     SETTINGS_TOGGLE_TRAY_WAVEFORM,
     SETTINGS_TOGGLE_ENTER_STOPS,
     SETTINGS_TOGGLE_SILENCE_STOP,
+    SETTINGS_TOGGLE_FLOATING_BUBBLE,
+    SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS,
 ];
+
+/// The bubble position button (opens the preset popup menu), right of its label.
+fn settings_bubble_position_rect() -> RectI {
+    RectI {
+        left: SETTINGS_INNER_RIGHT - 150,
+        top: BUBBLE_POSITION_ROW_TOP + 6,
+        right: SETTINGS_INNER_RIGHT,
+        bottom: BUBBLE_POSITION_ROW_TOP + 38,
+    }
+}
 
 /// The row of a toggle setting: Preload sits on the Model tab, all others on
 /// the Settings tab below the shortcut row.
