@@ -1,0 +1,53 @@
+# Changelog
+
+All notable changes to **Nemotron Bubble** will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+___
+
+## 0.11.0
+
+📅 _2026-??-??_
+✏️ _LittlePhoenix_
+
+### Added
+
+- Choice of the speech model (*English*, *Multilingual*, *Predefined*) in the settings window and the tray menu. On first start the installed model is selected automatically.
+- Language selection for the multilingual model. Besides *Auto-detect*, the 15 languages NVIDIA rates as transcription-ready are offered. A change applies instantly without reloading the model.
+- GPU processing via DirectML, which works with any DirectX 12 graphics adapter. The new *Processing* setting offers *CPU* (default), *GPU* and *Auto*.
+- Each history entry records the device and the average processing time per 560 ms audio chunk.
+- Six preset positions for the floating bubble (top or bottom, each left, center or right). The choice is saved in `settings.json`.
+- A log file `log\nemotron-bubble.log` with startup, microphone, model loading and all errors. The same lines go to `OutputDebugString` for DebugView.
+- Messages for a missing microphone and for a model that fails to load.
+- The new `--self-test` parameter prints to the console and reports the device and the processing time per chunk.
+- The version is shown in the settings window, the tray menu and the file properties of the executable.
+- An icon for the executable.
+
+### Changed
+
+- The main window is redesigned. It is about half as wide, splits into the tabs *History*, *Model* and *Settings*, and opens next to the bubble or the tray icon, depending on what was clicked. The close button is the Windows ✕.
+- The history list is drawn by the app itself. Each entry has a copy icon and a smaller grey header line, and the list scrolls with the mouse wheel. A trash button replaces *Clear*, and *Copy Latest* is gone.
+- The app is portable. Settings, history and sounds are stored in `config\` and the logs in `log\` next to the exe instead of in `%APPDATA%`.
+- The bubble keeps a 10 pixel margin to the screen edges and the taskbar and its shadow is smaller so it no longer overlaps the taskbar.
+- The Space key is labelled *Space* in the shortcut instead of its localized Windows name.
+- The model download script retries a download that was interrupted before.
+
+### Fixed
+
+- The multilingual model crashed while loading, which left the app without speech recognition.
+- With both models installed, the English model was always loaded and the multilingual one could not be chosen.
+- The app quit silently when no microphone was available. It now shows a warning and retries when dictation starts.
+- An interrupted model download left a truncated file behind that the download script then skipped.
+
+### References
+
+⚪ embed-resource **3.0.12**  
+🔵 parakeet-rs ~~0.3.6~~ → **0.4.4**  
+___
+
+## 0.10.0
+
+📅 _2026-06-27_
+✏️ _snipemanmike_
+
+Initial state of this fork, cloned from [snipemanmike/nemotron-bubble](https://github.com/snipemanmike/nemotron-bubble) at commit [`6ca5b21`](https://github.com/snipemanmike/nemotron-bubble/commit/6ca5b21) (*Make silence auto-stop an optional setting*).

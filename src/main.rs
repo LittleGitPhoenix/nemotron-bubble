@@ -2836,6 +2836,11 @@ fn key_is_down(vk: u16) -> bool {
 
 /// Localised name of a single key ("Space", "F8", "A", ...).
 fn key_name(vk: u32) -> String {
+    // Windows names Space in the system language ("LEER" on German systems),
+    // which reads oddly next to the English "Ctrl"/"Alt"; name it ourselves.
+    if vk == VK_SPACE as u32 {
+        return "Space".to_string();
+    }
     unsafe {
         let scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
         if scan != 0 {
@@ -4966,18 +4971,22 @@ fn render_assets(out_dir: &str) -> Result<()> {
         write_gif(&dir.join("demo.gif"), HERO_W, HERO_H, &frames, 3)?;
     }
 
-    // ---- settings*.png : the settings window's tabs with demo data ----
-    // settings.png shows the first tab (History); every tab also gets its own file.
+    // ---- settings-<tab>.png : one image per tab of the settings window ----
     {
-        let settings = AppSettings::default();
         let history = demo_history();
         let cw = SETTINGS_WIDTH;
         let ch = SETTINGS_HEIGHT;
-        for (tab, name) in [
-            (TAB_HISTORY, "settings.png"),
-            (TAB_HISTORY, "settings-history.png"),
-            (TAB_MODEL, "settings-model.png"),
-            (TAB_SETTINGS, "settings-settings.png"),
+        // The Model tab shows the multilingual model with a language chosen, so
+        // the Language control is not greyed out in the README.
+        let multilingual = AppSettings {
+            model: ModelChoice::Multilingual,
+            language: "de".to_string(),
+            ..AppSettings::default()
+        };
+        for (tab, name, settings, status) in [
+            (TAB_HISTORY, "settings-history.png", AppSettings::default(), ""),
+            (TAB_MODEL, "settings-model.png", multilingual, "Loaded: Multilingual (German) · CPU"),
+            (TAB_SETTINGS, "settings-settings.png", AppSettings::default(), ""),
         ] {
             if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
                 let view = HistoryView {
@@ -4986,14 +4995,7 @@ fn render_assets(out_dir: &str) -> Result<()> {
                     copied: None,
                 };
                 unsafe {
-                    render_settings_canvas(
-                        &mut canvas,
-                        &settings,
-                        "Loaded: English · CPU",
-                        &view,
-                        false,
-                        tab,
-                    )
+                    render_settings_canvas(&mut canvas, &settings, status, &view, false, tab)
                 };
                 let rgba = settings_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
                 write_png(&dir.join(name), cw as u32, ch as u32, &rgba)?;
@@ -5001,24 +5003,24 @@ fn render_assets(out_dir: &str) -> Result<()> {
         }
     }
 
-    println!("Wrote bubble.png, demo.gif and settings*.png to {out_dir}");
+    println!("Wrote bubble.png, demo.gif and settings-<tab>.png to {out_dir}");
     Ok(())
 }
 
 #[cfg(feature = "assets")]
 fn demo_history() -> Vec<HistoryItem> {
-    let make = |timestamp: &str, text: &str| HistoryItem {
+    let make = |timestamp: &str, device: &str, ms: u32, text: &str| HistoryItem {
         timestamp: timestamp.to_string(),
         text: text.to_string(),
-        processing: Some("CPU".to_string()),
-        ms_per_chunk: Some(130),
+        processing: Some(device.to_string()),
+        ms_per_chunk: Some(ms),
     };
     vec![
-        make("Today, 2:14 PM", "Let's ship the new dictation bubble — it looks fantastic."),
-        make("Today, 2:11 PM", "Meeting notes: confirm the roadmap and follow up with the design team tomorrow."),
-        make("Today, 1:58 PM", "Reminder to refactor the audio capture pipeline next sprint."),
-        make("Today, 1:42 PM", "The quick brown fox jumps over the lazy dog."),
-        make("Yesterday, 6:30 PM", "Draft the release notes and update the screenshots in the README."),
+        make("Nov 24, 2:14 PM", "CPU", 128, "Let's ship the new dictation bubble — it looks fantastic."),
+        make("Nov 24, 2:11 PM", "CPU", 131, "Meeting notes: confirm the roadmap and follow up with the design team tomorrow."),
+        make("Nov 24, 1:58 PM", "GPU", 287, "Reminder to refactor the audio capture pipeline next sprint."),
+        make("Nov 24, 1:42 PM", "CPU", 126, "The quick brown fox jumps over the lazy dog."),
+        make("Nov 23, 6:30 PM", "CPU", 133, "Draft the release notes and update the screenshots in the README."),
     ]
 }
 
