@@ -103,17 +103,42 @@ const WAVE_BARS: usize = 18;
 const ANIM_TIMER_ID: usize = 77;
 const ANIM_INTERVAL_MS: u32 = 33; // ~30 fps
 
-const SETTINGS_WIDTH: i32 = 700;
-const SETTINGS_HEIGHT: i32 = 808;
-// Space below the two cards; holds the version label at the bottom left.
+// Settings window: header, a tab bar (History | Model | Settings) and one card
+// that shows the active tab. The width fits one column of settings rows.
+const SETTINGS_WIDTH: i32 = 392;
+const SETTINGS_HEIGHT: i32 = 768;
+// Space below the card; holds the version label at the bottom right.
 const SETTINGS_FOOTER_H: i32 = 36;
+const SETTINGS_CARD_LEFT: i32 = 20;
+const SETTINGS_CARD_TOP: i32 = 118;
+// Content area inside the card.
+const SETTINGS_INNER_LEFT: i32 = 40;
+const SETTINGS_INNER_RIGHT: i32 = SETTINGS_WIDTH - 40;
+const SETTINGS_TAB_TOP: i32 = 78;
+const SETTINGS_TAB_BOTTOM: i32 = 108;
+const SETTINGS_TABS: [&str; 3] = ["History", "Model", "Settings"];
+const TAB_HISTORY: usize = 0;
+const TAB_MODEL: usize = 1;
+const TAB_SETTINGS: usize = 2;
 const HISTORY_EDIT_ID: usize = 3001;
-// Right card layout: the speech-model picker sits at the top, history below it.
-const MODEL_PICKER_TOP: i32 = 160;
-const LANGUAGE_ROW_TOP: i32 = 204;
-const COMPUTE_ROW_TOP: i32 = 250;
-const HISTORY_BUTTONS_TOP: i32 = 304;
-const HISTORY_PANEL_TOP: i32 = 372;
+// History tab
+const HISTORY_BUTTONS_TOP: i32 = 134;
+// The history list (an EDIT control) spans the card's width, inset 4 px so it
+// stays clear of the rounded corners; its text keeps the 40 px content margin.
+const HISTORY_PANEL_LEFT: i32 = SETTINGS_CARD_LEFT + 4;
+const HISTORY_PANEL_WIDTH: i32 = SETTINGS_WIDTH - 2 * HISTORY_PANEL_LEFT;
+const HISTORY_PANEL_TOP: i32 = 202;
+const HISTORY_PANEL_HEIGHT: i32 = SETTINGS_HEIGHT - HISTORY_PANEL_TOP - SETTINGS_FOOTER_H - 16;
+const HISTORY_TEXT_MARGIN_LEFT: i32 = SETTINGS_INNER_LEFT - HISTORY_PANEL_LEFT;
+// One flat colour for the History card and the list, so the list has no visible edge.
+const HISTORY_BG: (u8, u8, u8) = (28, 31, 39);
+// Model tab: Processing, Speech model, Language, Preload (top to bottom)
+const COMPUTE_SECTION_TOP: i32 = 132;
+const MODEL_SECTION_TOP: i32 = 230;
+const LANGUAGE_ROW_TOP: i32 = 328;
+const PRELOAD_ROW_TOP: i32 = 384;
+// Settings tab
+const SETTINGS_TAB_TOGGLES_TOP: i32 = 180;
 const NEMOTRON_SAMPLE_RATE: f64 = 16_000.0;
 const NEMOTRON_CHUNK_SIZE: usize = 8_960; // 560 ms at 16 kHz.
 
@@ -146,6 +171,7 @@ static APP: OnceCell<Arc<AppState>> = OnceCell::new();
 static UI_FONT: OnceCell<isize> = OnceCell::new();
 static TITLE_FONT: OnceCell<isize> = OnceCell::new();
 static SMALL_FONT: OnceCell<isize> = OnceCell::new();
+static ICON_FONT: OnceCell<isize> = OnceCell::new();
 static EDIT_BG_BRUSH: OnceCell<isize> = OnceCell::new();
 // The currently-installed tray HICON. Animated icons are swapped in via NIM_MODIFY
 // and the previous one destroyed, so this tracks what needs cleanup.
@@ -436,6 +462,8 @@ struct AppState {
     settings_hwnd: AtomicIsize,
     history_edit_hwnd: AtomicIsize,
     capturing_hotkey: AtomicBool,
+    /// Active tab of the settings window (TAB_HISTORY / TAB_MODEL / TAB_SETTINGS).
+    settings_tab: AtomicUsize,
     enter_pending: AtomicBool,
     drag: Mutex<Option<DragState>>,
     settings: Mutex<AppSettings>,
@@ -545,6 +573,7 @@ fn run_app() -> Result<()> {
         settings_hwnd: AtomicIsize::new(0),
         history_edit_hwnd: AtomicIsize::new(0),
         capturing_hotkey: AtomicBool::new(false),
+        settings_tab: AtomicUsize::new(TAB_HISTORY),
         enter_pending: AtomicBool::new(false),
         drag: Mutex::new(None),
         settings: Mutex::new(settings),
@@ -1143,10 +1172,10 @@ unsafe fn create_history_edit(parent: HWND, app: &Arc<AppState>) {
             | (ES_READONLY as u32)
             | (ES_AUTOVSCROLL as u32)
             | (ES_NOHIDESEL as u32),
-        400,
+        HISTORY_PANEL_LEFT,
         HISTORY_PANEL_TOP,
-        SETTINGS_WIDTH - 436,
-        SETTINGS_HEIGHT - HISTORY_PANEL_TOP - SETTINGS_FOOTER_H - 4,
+        HISTORY_PANEL_WIDTH,
+        HISTORY_PANEL_HEIGHT,
         parent,
         HISTORY_EDIT_ID as _,
         GetModuleHandleW(null()),
@@ -1155,6 +1184,12 @@ unsafe fn create_history_edit(parent: HWND, app: &Arc<AppState>) {
     if edit != null_mut() {
         app.history_edit_hwnd.store(edit as isize, Ordering::SeqCst);
         SendMessageW(edit, WM_SETFONT, ui_font() as usize, 1);
+        // Inner margins: the text lines up with the buttons above the list.
+        const EM_SETMARGINS: u32 = 0x00D3;
+        const EC_LEFTMARGIN: usize = 0x1;
+        const EC_RIGHTMARGIN: usize = 0x2;
+        let margins = (HISTORY_TEXT_MARGIN_LEFT as u16 as isize) | ((8u16 as isize) << 16);
+        SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, margins);
         apply_dark_scrollbar(edit);
         update_history_edit(app);
     }
@@ -1482,7 +1517,7 @@ unsafe extern "system" fn wnd_proc(
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
             let hdc = wparam as HDC;
             SetTextColor(hdc, rgb(225, 230, 238));
-            SetBkColor(hdc, rgb(33, 37, 46));
+            SetBkColor(hdc, rgb(HISTORY_BG.0, HISTORY_BG.1, HISTORY_BG.2));
             edit_bg_brush() as isize
         }
         WM_DESTROY => {
@@ -2939,8 +2974,10 @@ fn handle_settings_click(x: i32, y: i32) {
         return;
     };
 
+    let tab = app.settings_tab.load(Ordering::SeqCst);
+
     // Shortcut rebind button: click to begin capture, click again to cancel.
-    if settings_shortcut_rect().contains(x, y) {
+    if tab == TAB_SETTINGS && settings_shortcut_rect().contains(x, y) {
         if app.capturing_hotkey.load(Ordering::SeqCst) {
             cancel_hotkey_capture(app);
         } else {
@@ -2963,6 +3000,28 @@ fn handle_settings_click(x: i32, y: i32) {
         return;
     }
 
+    for index in 0..SETTINGS_TABS.len() {
+        if settings_tab_rect(index).contains(x, y) {
+            set_settings_tab(app, index);
+            return;
+        }
+    }
+
+    match tab {
+        TAB_HISTORY => handle_history_tab_click(app, x, y),
+        TAB_MODEL => handle_model_tab_click(app, x, y),
+        _ => {
+            for id in SETTINGS_TAB_TOGGLES {
+                if settings_toggle_rect(id).contains(x, y) {
+                    toggle_setting(app, id);
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn handle_history_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
     if settings_copy_latest_rect().contains(x, y) {
         if let Some(item) = history_snapshot(app).first() {
             let _ = set_clipboard_text(&item.text, settings_hwnd_from_app(app));
@@ -2975,9 +3034,10 @@ fn handle_settings_click(x: i32, y: i32) {
 
     if settings_clear_history_rect().contains(x, y) {
         clear_history(app);
-        return;
     }
+}
 
+fn handle_model_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
     for choice in ModelChoice::ALL {
         if settings_model_rect(choice).contains(x, y) {
             select_model(app, choice);
@@ -3003,24 +3063,8 @@ fn handle_settings_click(x: i32, y: i32) {
         return;
     }
 
-    for id in [
-        SETTINGS_TOGGLE_STARTUP,
-        SETTINGS_TOGGLE_PRELOAD,
-        SETTINGS_TOGGLE_LIVE_TYPE,
-        SETTINGS_TOGGLE_FINAL_CLIPBOARD,
-        SETTINGS_TOGGLE_FINAL_PASTE,
-        SETTINGS_TOGGLE_SOUNDS,
-        SETTINGS_TOGGLE_WAVEFORM,
-        SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS,
-        SETTINGS_TOGGLE_FLOATING_BUBBLE,
-        SETTINGS_TOGGLE_TRAY_WAVEFORM,
-        SETTINGS_TOGGLE_ENTER_STOPS,
-        SETTINGS_TOGGLE_SILENCE_STOP,
-    ] {
-        if settings_toggle_rect(id).contains(x, y) {
-            toggle_setting(app, id);
-            return;
-        }
+    if settings_toggle_rect(SETTINGS_TOGGLE_PRELOAD).contains(x, y) {
+        toggle_setting(app, SETTINGS_TOGGLE_PRELOAD);
     }
 }
 
@@ -3608,108 +3652,88 @@ unsafe fn paint_settings(hwnd: HWND) {
     let model_status = lock_ui(app).model_status.clone();
     if let Some(mut canvas) = Canvas::new(SETTINGS_WIDTH, SETTINGS_HEIGHT) {
         // history = None: the live EDIT control paints the recent-dictations panel.
-        render_settings_canvas(&mut canvas, &settings, &model_status, None, capturing);
+        let tab = app.settings_tab.load(Ordering::SeqCst);
+        render_settings_canvas(&mut canvas, &settings, &model_status, None, capturing, tab);
         canvas.blit_to(hdc);
     }
     EndPaint(hwnd, &ps);
 }
 
-/// Render the entire settings surface into a canvas: background, cards, toggle
-/// switches, buttons and ClearType text. When `history` is Some, the recent-dictations
-/// panel (normally the live EDIT control) is drawn too — used by the asset exporter.
+/// Render the entire settings surface into a canvas: header, tab bar and the card
+/// of the active `tab` with its switches, buttons and ClearType text. When
+/// `history` is Some, the recent-dictations list (normally the live EDIT control)
+/// is drawn too — used by the asset exporter.
 unsafe fn render_settings_canvas(
     canvas: &mut Canvas,
     settings: &AppSettings,
     model_status: &str,
     history: Option<&[HistoryItem]>,
     capturing: bool,
+    tab: usize,
 ) {
     let rows = setting_rows(settings);
     let cw = canvas.w;
     let ch = canvas.h;
-    let card_top = 102.0;
-    let card_h = ch as f32 - card_top - SETTINGS_FOOTER_H as f32;
-    let right_card_x = 384.0;
+    let card_left = SETTINGS_CARD_LEFT as f32;
+    let card_top = SETTINGS_CARD_TOP as f32;
+    let card_w = (cw - 2 * SETTINGS_CARD_LEFT) as f32;
+    let card_h = (ch - SETTINGS_CARD_TOP - SETTINGS_FOOTER_H) as f32;
+    let inner_w = SETTINGS_INNER_RIGHT - SETTINGS_INNER_LEFT;
 
-    // history panel region (matches create_history_edit)
-    let ex = 400;
-    let ey = HISTORY_PANEL_TOP;
-    let ew = SETTINGS_WIDTH - 436;
-    let eh = SETTINGS_HEIGHT - HISTORY_PANEL_TOP - SETTINGS_FOOTER_H - 4;
+    // history list region (matches create_history_edit)
+    let (ex, ey, ew, eh) = (HISTORY_PANEL_LEFT, HISTORY_PANEL_TOP, HISTORY_PANEL_WIDTH, HISTORY_PANEL_HEIGHT);
 
     // -------- pass 1: anti-aliased shapes straight into the pixel buffer --------
     {
         let buf = canvas.pixels();
         fill_round_rect(buf, cw, ch, 0.0, 0.0, cw as f32, ch as f32, 0.0, (25, 27, 33), (16, 17, 21), 1.0);
         fill_round_rect(buf, cw, ch, 28.0, 26.0, 4.0, 32.0, 2.0, (110, 162, 255), (84, 138, 250), 1.0);
-        fill_round_rect(buf, cw, ch, 20.0, card_top, 352.0, card_h, 16.0, (30, 33, 41), (25, 28, 35), 1.0);
-        fill_round_rect(
-            buf,
-            cw,
-            ch,
-            right_card_x,
-            card_top,
-            cw as f32 - right_card_x - 20.0,
-            card_h,
-            16.0,
-            (30, 33, 41),
-            (25, 28, 35),
-            1.0,
-        );
 
-        draw_button_bg(buf, cw, ch, settings_close_rect(), false);
-        draw_button_bg(buf, cw, ch, settings_copy_latest_rect(), true);
-        draw_button_bg(buf, cw, ch, settings_clear_history_rect(), false);
-        // shortcut rebind button (accent while capturing)
-        draw_button_bg(buf, cw, ch, settings_shortcut_rect(), capturing);
+        // tab bar: thin baseline, accent underline below the active tab
+        let base_y = SETTINGS_TAB_BOTTOM as f32;
+        fill_round_rect(buf, cw, ch, card_left, base_y - 1.0, card_w, 1.0, 0.0, (44, 48, 58), (44, 48, 58), 1.0);
+        let active = settings_tab_rect(tab);
+        let underline_w = 56.0;
+        let underline_x = (active.left + active.right) as f32 / 2.0 - underline_w / 2.0;
+        fill_round_rect(buf, cw, ch, underline_x, base_y - 3.0, underline_w, 3.0, 1.5, (110, 162, 255), (84, 138, 250), 1.0);
 
-        // speech-model segmented control: dark track, accent on the selection
-        let track = settings_model_track_rect();
-        fill_round_rect(
-            buf,
-            cw,
-            ch,
-            track.left as f32,
-            track.top as f32,
-            (track.right - track.left) as f32,
-            (track.bottom - track.top) as f32,
-            13.0,
-            (40, 44, 54),
-            (36, 40, 49),
-            1.0,
-        );
-        draw_button_bg(buf, cw, ch, settings_model_rect(settings.model), true);
+        // the card of the active tab; flat on History so the list blends in
+        let (card_top_color, card_bottom_color) = if tab == TAB_HISTORY {
+            (HISTORY_BG, HISTORY_BG)
+        } else {
+            ((30, 33, 41), (25, 28, 35))
+        };
+        fill_round_rect(buf, cw, ch, card_left, card_top, card_w, card_h, 16.0, card_top_color, card_bottom_color, 1.0);
 
-        // language button (same look as the shortcut button)
-        draw_button_bg(buf, cw, ch, settings_language_rect(), false);
-
-        // processing segmented control (Auto / GPU / CPU)
-        let track = settings_compute_track_rect();
-        fill_round_rect(
-            buf,
-            cw,
-            ch,
-            track.left as f32,
-            track.top as f32,
-            (track.right - track.left) as f32,
-            (track.bottom - track.top) as f32,
-            13.0,
-            (40, 44, 54),
-            (36, 40, 49),
-            1.0,
-        );
-        draw_button_bg(buf, cw, ch, settings_compute_rect(settings.compute), true);
-
-        for row in &rows {
-            draw_toggle(buf, cw, ch, settings_toggle_rect(row.id), row.enabled);
-        }
-
-        if history.is_some() {
-            // history panel background + a thin modern scrollbar (mirrors the live look)
-            fill_round_rect(buf, cw, ch, ex as f32, ey as f32, ew as f32, eh as f32, 8.0, (33, 37, 46), (30, 34, 42), 1.0);
-            let sb_x = (ex + ew - 8) as f32;
-            fill_round_rect(buf, cw, ch, sb_x, (ey + 8) as f32, 4.0, (eh - 16) as f32, 2.0, (45, 50, 61), (45, 50, 61), 1.0);
-            fill_round_rect(buf, cw, ch, sb_x, (ey + 12) as f32, 4.0, eh as f32 * 0.4, 2.0, (92, 100, 116), (92, 100, 116), 1.0);
+        match tab {
+            TAB_HISTORY => {
+                draw_button_bg(buf, cw, ch, settings_copy_latest_rect(), true);
+                draw_button_bg(buf, cw, ch, settings_clear_history_rect(), false);
+                if history.is_some() {
+                    // a thin modern scrollbar (mirrors the live look)
+                    let sb_x = (ex + ew - 8) as f32;
+                    fill_round_rect(buf, cw, ch, sb_x, (ey + 8) as f32, 4.0, (eh - 16) as f32, 2.0, (45, 50, 61), (45, 50, 61), 1.0);
+                    fill_round_rect(buf, cw, ch, sb_x, (ey + 12) as f32, 4.0, eh as f32 * 0.4, 2.0, (92, 100, 116), (92, 100, 116), 1.0);
+                }
+            }
+            TAB_MODEL => {
+                draw_segment_track(buf, cw, ch, settings_compute_track_rect());
+                draw_button_bg(buf, cw, ch, settings_compute_rect(settings.compute), true);
+                draw_divider(buf, cw, ch, MODEL_SECTION_TOP - 12);
+                draw_segment_track(buf, cw, ch, settings_model_track_rect());
+                draw_button_bg(buf, cw, ch, settings_model_rect(settings.model), true);
+                draw_divider(buf, cw, ch, LANGUAGE_ROW_TOP - 12);
+                draw_button_bg(buf, cw, ch, settings_language_rect(), false);
+                draw_divider(buf, cw, ch, PRELOAD_ROW_TOP - 8);
+                draw_toggle(buf, cw, ch, settings_toggle_rect(SETTINGS_TOGGLE_PRELOAD), settings.preload_model);
+            }
+            _ => {
+                // shortcut rebind button (accent while capturing)
+                draw_button_bg(buf, cw, ch, settings_shortcut_rect(), capturing);
+                for row in rows.iter().filter(|row| row.id != SETTINGS_TOGGLE_PRELOAD) {
+                    draw_toggle(buf, cw, ch, settings_toggle_rect(row.id), row.enabled);
+                }
+            }
         }
     }
 
@@ -3719,109 +3743,156 @@ unsafe fn render_settings_canvas(
 
     SelectObject(dc, title_font() as _);
     SetTextColor(dc, rgb(237, 241, 247));
-    text_left(dc, "Nemotron Bubble", 42, 22, 320, 34);
+    text_left(dc, "Nemotron Bubble", 42, 22, cw - 110, 34);
 
     SelectObject(dc, small_font() as _);
     SetTextColor(dc, rgb(140, 150, 164));
-    text_left(dc, "Settings & recent dictations", 42, 54, 320, 20);
+    text_left(dc, "Settings & recent dictations", 42, 54, cw - 110, 20);
 
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(210, 216, 226));
-    text_center(dc, "Close", settings_close_rect());
+    // close: the ChromeClose glyph of the Windows icon font, like a title bar's X
+    SelectObject(dc, icon_font() as _);
+    SetTextColor(dc, rgb(205, 212, 224));
+    text_center(dc, "\u{E8BB}", settings_close_rect());
 
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(122, 132, 147));
-    text_left(dc, "BEHAVIOR", 34, 82, 200, 18);
-    text_left(dc, "MODEL & HISTORY", right_card_x as i32 + 16, 82, 200, 18);
-
-    // speech-model row
+    // tab labels
     SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Speech model", right_card_x as i32 + 16, 115, 264, 20);
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, model_status, right_card_x as i32 + 16, 135, 264, 18);
-    SelectObject(dc, ui_font() as _);
-    for choice in ModelChoice::ALL {
-        if choice == settings.model {
-            SetTextColor(dc, rgb(245, 248, 252));
-        } else if !model_choice_available(settings, choice) {
-            SetTextColor(dc, rgb(92, 100, 114)); // greyed out: nothing predefined
-        } else {
-            SetTextColor(dc, rgb(184, 192, 205));
-        }
-        text_center(dc, choice.label(), settings_model_rect(choice));
-    }
-
-    // language row: label + detail on the left, popup button on the right
-    let language_enabled = language_selectable(settings);
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Language", right_card_x as i32 + 16, LANGUAGE_ROW_TOP + 1, 110, 20);
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, "Multilingual model only.", right_card_x as i32 + 16, LANGUAGE_ROW_TOP + 21, 136, 18);
-    SelectObject(dc, ui_font() as _);
-    if language_enabled {
-        SetTextColor(dc, rgb(245, 248, 252));
-    } else {
-        SetTextColor(dc, rgb(92, 100, 114));
-    }
-    text_center(
-        dc,
-        &format!("{}  \u{25BE}", language_label(&settings.language)),
-        settings_language_rect(),
-    );
-
-    // processing row: label + detail on the left, Auto / GPU / CPU on the right
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Processing", right_card_x as i32 + 16, COMPUTE_ROW_TOP + 1, 130, 20);
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, "Auto: GPU, else CPU.", right_card_x as i32 + 16, COMPUTE_ROW_TOP + 21, 136, 18);
-    SelectObject(dc, ui_font() as _);
-    for choice in ComputeChoice::ALL {
-        if choice == settings.compute {
+    for (index, label) in SETTINGS_TABS.iter().enumerate() {
+        if index == tab {
             SetTextColor(dc, rgb(245, 248, 252));
         } else {
-            SetTextColor(dc, rgb(184, 192, 205));
+            SetTextColor(dc, rgb(140, 150, 164));
         }
-        text_center(dc, choice.label(), settings_compute_rect(choice));
+        let rect = settings_tab_rect(index);
+        text_center(dc, label, RectI { bottom: rect.bottom - 4, ..rect });
     }
 
-    // shortcut row
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Global shortcut", 40, 115, 168, 20);
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, "Click, then press your keys.", 40, 135, 168, 18);
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(245, 248, 252));
-    let shortcut_label = if capturing {
-        "Press keys...".to_string()
-    } else {
-        hotkey_label(settings.hotkey_mods, settings.hotkey_vk)
-    };
-    text_center(dc, &shortcut_label, settings_shortcut_rect());
+    match tab {
+        TAB_HISTORY => {
+            SelectObject(dc, ui_font() as _);
+            SetTextColor(dc, rgb(245, 248, 252));
+            text_center(dc, "Copy Latest", settings_copy_latest_rect());
+            SetTextColor(dc, rgb(214, 220, 230));
+            text_center(dc, "Clear", settings_clear_history_rect());
 
-    SetTextColor(dc, rgb(245, 248, 252));
-    text_center(dc, "Copy Latest", settings_copy_latest_rect());
-    SetTextColor(dc, rgb(214, 220, 230));
-    text_center(dc, "Clear", settings_clear_history_rect());
+            SetTextColor(dc, rgb(126, 136, 150));
+            text_left(
+                dc,
+                "Select a line and copy with Ctrl+C.",
+                SETTINGS_INNER_LEFT,
+                HISTORY_BUTTONS_TOP + 44,
+                inner_w,
+                18,
+            );
 
-    SetTextColor(dc, rgb(126, 136, 150));
-    text_left(
-        dc,
-        "Select a line and copy with Ctrl+C.",
-        right_card_x as i32 + 16,
-        HISTORY_BUTTONS_TOP + 44,
-        cw - right_card_x as i32 - 36,
-        18,
-    );
+            if let Some(items) = history {
+                let mut y = ey + 4;
+                let bottom = ey + eh - 12;
+                let text_x = ex + HISTORY_TEXT_MARGIN_LEFT;
+                let text_w = ew - HISTORY_TEXT_MARGIN_LEFT - 24;
+                for item in items {
+                    if y > bottom - 16 {
+                        break;
+                    }
+                    SelectObject(dc, small_font() as _);
+                    SetTextColor(dc, rgb(140, 152, 170));
+                    text_left(dc, &item.header(), text_x, y, text_w, 16);
+                    y += 18;
+                    SelectObject(dc, ui_font() as _);
+                    SetTextColor(dc, rgb(216, 223, 233));
+                    let lines = (item.text.chars().count() / 32 + 1).min(3) as i32;
+                    let h = lines * 19;
+                    let mut r = RECT {
+                        left: text_x,
+                        top: y,
+                        right: text_x + text_w,
+                        bottom: (y + h).min(bottom),
+                    };
+                    let wide = wide_null(&item.text);
+                    DrawTextW(dc, wide.as_ptr(), -1, &mut r, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+                    y += h + 12;
+                }
+            }
+        }
+        TAB_MODEL => {
+            // Processing (first: decides how the model is loaded)
+            section_heading(
+                dc,
+                COMPUTE_SECTION_TOP,
+                "Processing",
+                "Where the model runs. Auto tries the GPU, then the CPU.",
+            );
+            SelectObject(dc, ui_font() as _);
+            for choice in ComputeChoice::ALL {
+                if choice == settings.compute {
+                    SetTextColor(dc, rgb(245, 248, 252));
+                } else {
+                    SetTextColor(dc, rgb(184, 192, 205));
+                }
+                text_center(dc, choice.label(), settings_compute_rect(choice));
+            }
 
-    // version footer, bottom right below the Model & History card
+            // Speech model (detail line: what is loaded, and where)
+            section_heading(dc, MODEL_SECTION_TOP, "Speech model", model_status);
+            SelectObject(dc, ui_font() as _);
+            for choice in ModelChoice::ALL {
+                if choice == settings.model {
+                    SetTextColor(dc, rgb(245, 248, 252));
+                } else if !model_choice_available(settings, choice) {
+                    SetTextColor(dc, rgb(92, 100, 114)); // greyed out: nothing predefined
+                } else {
+                    SetTextColor(dc, rgb(184, 192, 205));
+                }
+                text_center(dc, choice.label(), settings_model_rect(choice));
+            }
+
+            // Language: label + detail on the left, popup button on the right
+            SelectObject(dc, ui_font() as _);
+            SetTextColor(dc, rgb(233, 238, 244));
+            text_left(dc, "Language", SETTINGS_INNER_LEFT, LANGUAGE_ROW_TOP + 1, 150, 20);
+            SelectObject(dc, small_font() as _);
+            SetTextColor(dc, rgb(124, 134, 148));
+            text_left(dc, "Multilingual model only.", SETTINGS_INNER_LEFT, LANGUAGE_ROW_TOP + 21, 160, 18);
+            SelectObject(dc, ui_font() as _);
+            if language_selectable(settings) {
+                SetTextColor(dc, rgb(245, 248, 252));
+            } else {
+                SetTextColor(dc, rgb(92, 100, 114));
+            }
+            text_center(
+                dc,
+                &format!("{}  \u{25BE}", language_label(&settings.language)),
+                settings_language_rect(),
+            );
+
+            // Preload toggle
+            if let Some(row) = rows.iter().find(|row| row.id == SETTINGS_TOGGLE_PRELOAD) {
+                draw_toggle_text(dc, row);
+            }
+        }
+        _ => {
+            // shortcut row
+            SelectObject(dc, ui_font() as _);
+            SetTextColor(dc, rgb(233, 238, 244));
+            text_left(dc, "Global shortcut", 40, SETTINGS_CARD_TOP + 13, 160, 20);
+            SelectObject(dc, small_font() as _);
+            SetTextColor(dc, rgb(124, 134, 148));
+            text_left(dc, "Click, then press your keys.", 40, SETTINGS_CARD_TOP + 33, 160, 18);
+            SelectObject(dc, ui_font() as _);
+            SetTextColor(dc, rgb(245, 248, 252));
+            let shortcut_label = if capturing {
+                "Press keys...".to_string()
+            } else {
+                hotkey_label(settings.hotkey_mods, settings.hotkey_vk)
+            };
+            text_center(dc, &shortcut_label, settings_shortcut_rect());
+
+            for row in rows.iter().filter(|row| row.id != SETTINGS_TOGGLE_PRELOAD) {
+                draw_toggle_text(dc, row);
+            }
+        }
+    }
+
+    // version footer, bottom right below the card
     SelectObject(dc, small_font() as _);
     SetTextColor(dc, rgb(108, 118, 132));
     text_right(
@@ -3834,44 +3905,63 @@ unsafe fn render_settings_canvas(
             bottom: ch - SETTINGS_FOOTER_H + 28,
         },
     );
+}
 
-    for row in &rows {
-        let rect = settings_toggle_rect(row.id);
-        SelectObject(dc, ui_font() as _);
-        SetTextColor(dc, rgb(233, 238, 244));
-        text_left(dc, row.title, rect.left + 8, rect.top + 1, 232, 20);
-        SelectObject(dc, small_font() as _);
-        SetTextColor(dc, rgb(124, 134, 148));
-        text_left(dc, row.detail, rect.left + 8, rect.top + 21, 248, 18);
-    }
+/// Title and detail line of a Model-tab section (its control sits below them).
+unsafe fn section_heading(dc: HDC, top: i32, title: &str, detail: &str) {
+    let width = SETTINGS_INNER_RIGHT - SETTINGS_INNER_LEFT;
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, title, SETTINGS_INNER_LEFT, top, width, 20);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(124, 134, 148));
+    text_left(dc, detail, SETTINGS_INNER_LEFT, top + 20, width, 18);
+}
 
-    if let Some(items) = history {
-        let mut y = ey + 12;
-        let bottom = ey + eh - 12;
-        let text_w = ew - 30;
-        for item in items {
-            if y > bottom - 16 {
-                break;
-            }
-            SelectObject(dc, small_font() as _);
-            SetTextColor(dc, rgb(140, 152, 170));
-            text_left(dc, &item.header(), ex + 14, y, text_w, 16);
-            y += 18;
-            SelectObject(dc, ui_font() as _);
-            SetTextColor(dc, rgb(216, 223, 233));
-            let lines = (item.text.chars().count() / 32 + 1).min(3) as i32;
-            let h = lines * 19;
-            let mut r = RECT {
-                left: ex + 14,
-                top: y,
-                right: ex + 14 + text_w,
-                bottom: (y + h).min(bottom),
-            };
-            let wide = wide_null(&item.text);
-            DrawTextW(dc, wide.as_ptr(), -1, &mut r, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
-            y += h + 12;
-        }
-    }
+/// Title and detail text of a toggle row (the switch itself is drawn in pass 1).
+unsafe fn draw_toggle_text(dc: HDC, row: &SettingRow) {
+    let rect = settings_toggle_rect(row.id);
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, row.title, rect.left + 8, rect.top + 1, 232, 20);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(124, 134, 148));
+    text_left(dc, row.detail, rect.left + 8, rect.top + 21, 248, 18);
+}
+
+/// Dark rounded track behind a segmented control.
+fn draw_segment_track(buf: &mut [u32], cw: i32, ch: i32, track: RectI) {
+    fill_round_rect(
+        buf,
+        cw,
+        ch,
+        track.left as f32,
+        track.top as f32,
+        (track.right - track.left) as f32,
+        (track.bottom - track.top) as f32,
+        13.0,
+        (40, 44, 54),
+        (36, 40, 49),
+        1.0,
+    );
+}
+
+/// Thin horizontal line between sections of a tab.
+fn draw_divider(buf: &mut [u32], cw: i32, ch: i32, y: i32) {
+    let width = (SETTINGS_INNER_RIGHT - SETTINGS_INNER_LEFT) as f32;
+    fill_round_rect(
+        buf,
+        cw,
+        ch,
+        SETTINGS_INNER_LEFT as f32,
+        y as f32,
+        width,
+        1.0,
+        0.0,
+        (44, 48, 58),
+        (44, 48, 58),
+        1.0,
+    );
 }
 
 /// Anti-aliased toggle switch (track + knob) inside a settings row.
@@ -4137,128 +4227,156 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     DestroyMenu(menu);
 }
 
+/// The close "X" in the top-right corner of the header.
 fn settings_close_rect() -> RectI {
     RectI {
-        left: SETTINGS_WIDTH - 96,
-        top: 24,
-        right: SETTINGS_WIDTH - 24,
-        bottom: 56,
+        left: SETTINGS_WIDTH - 54,
+        top: 18,
+        right: SETTINGS_WIDTH - 14,
+        bottom: 50,
+    }
+}
+
+/// One tab of the tab bar (History | Model | Settings), spanning the card width.
+fn settings_tab_rect(tab: usize) -> RectI {
+    let width = (SETTINGS_WIDTH - 2 * SETTINGS_CARD_LEFT) / SETTINGS_TABS.len() as i32;
+    let left = SETTINGS_CARD_LEFT + tab as i32 * width;
+    RectI {
+        left,
+        top: SETTINGS_TAB_TOP,
+        right: left + width,
+        bottom: SETTINGS_TAB_BOTTOM,
     }
 }
 
 fn settings_copy_latest_rect() -> RectI {
     RectI {
-        left: 400,
+        left: SETTINGS_INNER_LEFT,
         top: HISTORY_BUTTONS_TOP,
-        right: 512,
+        right: SETTINGS_INNER_LEFT + 112,
         bottom: HISTORY_BUTTONS_TOP + 32,
     }
 }
 
 fn settings_clear_history_rect() -> RectI {
     RectI {
-        left: 524,
+        left: SETTINGS_INNER_LEFT + 124,
         top: HISTORY_BUTTONS_TOP,
-        right: 600,
+        right: SETTINGS_INNER_LEFT + 200,
         bottom: HISTORY_BUTTONS_TOP + 32,
     }
 }
 
-/// Background track of the Processing (Auto / GPU / CPU) segmented control.
-fn settings_compute_track_rect() -> RectI {
+/// A full-width segmented-control track below a section's title and detail line.
+fn section_track_rect(section_top: i32) -> RectI {
     RectI {
-        left: 540,
-        top: COMPUTE_ROW_TOP + 4,
-        right: SETTINGS_WIDTH - 36,
-        bottom: COMPUTE_ROW_TOP + 36,
+        left: SETTINGS_INNER_LEFT,
+        top: section_top + 44,
+        right: SETTINGS_INNER_RIGHT,
+        bottom: section_top + 76,
     }
 }
 
-/// One segment of the Processing control.
-fn settings_compute_rect(choice: ComputeChoice) -> RectI {
-    let track = settings_compute_track_rect();
-    let index = ComputeChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0) as i32;
-    let count = ComputeChoice::ALL.len() as i32;
-    let width = (track.right - track.left) / count;
-    let left = track.left + index * width;
-    let right = if index == count - 1 { track.right } else { left + width };
+/// Segment `index` of `count` equal segments within `track`.
+fn segment_rect(track: RectI, index: usize, count: usize) -> RectI {
+    let width = (track.right - track.left) / count as i32;
+    let left = track.left + index as i32 * width;
+    let right = if index + 1 == count { track.right } else { left + width };
     RectI {
         left,
         top: track.top,
         right,
         bottom: track.bottom,
     }
+}
+
+/// Background track of the Processing (CPU / GPU / Auto) segmented control.
+fn settings_compute_track_rect() -> RectI {
+    section_track_rect(COMPUTE_SECTION_TOP)
+}
+
+/// One segment of the Processing control.
+fn settings_compute_rect(choice: ComputeChoice) -> RectI {
+    let index = ComputeChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0);
+    segment_rect(settings_compute_track_rect(), index, ComputeChoice::ALL.len())
+}
+
+/// Background track of the speech-model segmented control.
+fn settings_model_track_rect() -> RectI {
+    section_track_rect(MODEL_SECTION_TOP)
+}
+
+/// One segment (English / Multilingual / Predefined) of the speech-model control.
+fn settings_model_rect(choice: ModelChoice) -> RectI {
+    let index = ModelChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0);
+    segment_rect(settings_model_track_rect(), index, ModelChoice::ALL.len())
 }
 
 /// The Language button (opens the language popup menu), right of its label.
 fn settings_language_rect() -> RectI {
     RectI {
-        left: 540,
+        left: SETTINGS_INNER_RIGHT - 140,
         top: LANGUAGE_ROW_TOP + 4,
-        right: SETTINGS_WIDTH - 36,
+        right: SETTINGS_INNER_RIGHT,
         bottom: LANGUAGE_ROW_TOP + 36,
     }
 }
 
-/// Background track of the speech-model segmented control (right card, top).
-fn settings_model_track_rect() -> RectI {
-    RectI {
-        left: 400,
-        top: MODEL_PICKER_TOP,
-        right: SETTINGS_WIDTH - 36,
-        bottom: MODEL_PICKER_TOP + 32,
-    }
-}
-
-/// One segment (English / Multilingual / Predefined) of the speech-model control.
-fn settings_model_rect(choice: ModelChoice) -> RectI {
-    let track = settings_model_track_rect();
-    let index = ModelChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0) as i32;
-    let count = ModelChoice::ALL.len() as i32;
-    let width = (track.right - track.left) / count;
-    let left = track.left + index * width;
-    let right = if index == count - 1 { track.right } else { left + width };
-    RectI {
-        left,
-        top: track.top,
-        right,
-        bottom: track.bottom,
-    }
-}
-
-/// The clickable shortcut-rebind button at the top of the Behavior card.
+/// The clickable shortcut-rebind button at the top of the Settings tab.
 fn settings_shortcut_rect() -> RectI {
     RectI {
-        left: 208,
-        top: 116,
-        right: 360,
-        bottom: 150,
+        left: SETTINGS_INNER_RIGHT - 150,
+        top: SETTINGS_CARD_TOP + 12,
+        right: SETTINGS_INNER_RIGHT,
+        bottom: SETTINGS_CARD_TOP + 46,
     }
 }
 
+/// The toggles of the Settings tab, top to bottom.
+const SETTINGS_TAB_TOGGLES: [usize; 11] = [
+    SETTINGS_TOGGLE_STARTUP,
+    SETTINGS_TOGGLE_LIVE_TYPE,
+    SETTINGS_TOGGLE_FINAL_CLIPBOARD,
+    SETTINGS_TOGGLE_FINAL_PASTE,
+    SETTINGS_TOGGLE_SOUNDS,
+    SETTINGS_TOGGLE_WAVEFORM,
+    SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS,
+    SETTINGS_TOGGLE_FLOATING_BUBBLE,
+    SETTINGS_TOGGLE_TRAY_WAVEFORM,
+    SETTINGS_TOGGLE_ENTER_STOPS,
+    SETTINGS_TOGGLE_SILENCE_STOP,
+];
+
+/// The row of a toggle setting: Preload sits on the Model tab, all others on
+/// the Settings tab below the shortcut row.
 fn settings_toggle_rect(id: usize) -> RectI {
-    let index = match id {
-        SETTINGS_TOGGLE_STARTUP => 0,
-        SETTINGS_TOGGLE_PRELOAD => 1,
-        SETTINGS_TOGGLE_LIVE_TYPE => 2,
-        SETTINGS_TOGGLE_FINAL_CLIPBOARD => 3,
-        SETTINGS_TOGGLE_FINAL_PASTE => 4,
-        SETTINGS_TOGGLE_SOUNDS => 5,
-        SETTINGS_TOGGLE_WAVEFORM => 6,
-        SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS => 7,
-        SETTINGS_TOGGLE_FLOATING_BUBBLE => 8,
-        SETTINGS_TOGGLE_TRAY_WAVEFORM => 9,
-        SETTINGS_TOGGLE_ENTER_STOPS => 10,
-        SETTINGS_TOGGLE_SILENCE_STOP => 11,
-        _ => 0,
+    let top = if id == SETTINGS_TOGGLE_PRELOAD {
+        PRELOAD_ROW_TOP
+    } else {
+        let index = SETTINGS_TAB_TOGGLES.iter().position(|t| *t == id).unwrap_or(0);
+        SETTINGS_TAB_TOGGLES_TOP + index as i32 * 49
     };
-    // Toggles begin below the shortcut row.
-    let top = 170 + index as i32 * 49;
     RectI {
         left: 32,
         top,
-        right: 360,
+        right: SETTINGS_WIDTH - 36,
         bottom: top + 44,
+    }
+}
+
+/// Switch the settings window to `tab`. The history list is a real EDIT
+/// control, so it is shown only on the History tab.
+fn set_settings_tab(app: &Arc<AppState>, tab: usize) {
+    app.settings_tab.store(tab, Ordering::SeqCst);
+    unsafe {
+        let edit = history_edit_hwnd_from_app(app);
+        if edit != null_mut() {
+            ShowWindow(edit, if tab == TAB_HISTORY { SW_SHOW } else { SW_HIDE });
+        }
+        let hwnd = settings_hwnd_from_app(app);
+        if hwnd != null_mut() {
+            InvalidateRect(hwnd, null(), 0);
+        }
     }
 }
 
@@ -4267,7 +4385,11 @@ fn wide_null(text: &str) -> Vec<u16> {
 }
 
 unsafe fn create_font(height: i32, weight: i32) -> isize {
-    let face = wide_null("Segoe UI");
+    create_font_face("Segoe UI", height, weight)
+}
+
+unsafe fn create_font_face(face: &str, height: i32, weight: i32) -> isize {
+    let face = wide_null(face);
     CreateFontW(
         height,
         0,
@@ -4286,6 +4408,11 @@ unsafe fn create_font(height: i32, weight: i32) -> isize {
     ) as isize
 }
 
+/// Windows' icon font (Windows 10 and 11), for the title-bar style close glyph.
+fn icon_font() -> isize {
+    *ICON_FONT.get_or_init(|| unsafe { create_font_face("Segoe MDL2 Assets", -11, FW_NORMAL as i32) })
+}
+
 fn ui_font() -> isize {
     *UI_FONT.get_or_init(|| unsafe { create_font(-15, FW_NORMAL as i32) })
 }
@@ -4299,7 +4426,9 @@ fn small_font() -> isize {
 }
 
 fn edit_bg_brush() -> isize {
-    *EDIT_BG_BRUSH.get_or_init(|| unsafe { CreateSolidBrush(rgb(33, 37, 46)) as isize })
+    *EDIT_BG_BRUSH.get_or_init(|| unsafe {
+        CreateSolidBrush(rgb(HISTORY_BG.0, HISTORY_BG.1, HISTORY_BG.2)) as isize
+    })
 }
 
 /// Build a 32x32 tray icon. While recording the equalizer bars scale with `level`
@@ -4513,22 +4642,37 @@ fn render_assets(out_dir: &str) -> Result<()> {
         write_gif(&dir.join("demo.gif"), HERO_W, HERO_H, &frames, 3)?;
     }
 
-    // ---- settings.png : settings window with demo data ----
+    // ---- settings*.png : the settings window's tabs with demo data ----
+    // settings.png shows the first tab (History); every tab also gets its own file.
     {
         let settings = AppSettings::default();
         let history = demo_history();
         let cw = SETTINGS_WIDTH;
         let ch = SETTINGS_HEIGHT;
-        if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
-            unsafe {
-                render_settings_canvas(&mut canvas, &settings, "Loaded: English", Some(&history), false)
-            };
-            let rgba = settings_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
-            write_png(&dir.join("settings.png"), cw as u32, ch as u32, &rgba)?;
+        for (tab, name) in [
+            (TAB_HISTORY, "settings.png"),
+            (TAB_HISTORY, "settings-history.png"),
+            (TAB_MODEL, "settings-model.png"),
+            (TAB_SETTINGS, "settings-settings.png"),
+        ] {
+            if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
+                unsafe {
+                    render_settings_canvas(
+                        &mut canvas,
+                        &settings,
+                        "Loaded: English · CPU",
+                        Some(&history),
+                        false,
+                        tab,
+                    )
+                };
+                let rgba = settings_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
+                write_png(&dir.join(name), cw as u32, ch as u32, &rgba)?;
+            }
         }
     }
 
-    println!("Wrote bubble.png, demo.gif, settings.png to {out_dir}");
+    println!("Wrote bubble.png, demo.gif and settings*.png to {out_dir}");
     Ok(())
 }
 
