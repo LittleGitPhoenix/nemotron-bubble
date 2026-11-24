@@ -31,6 +31,7 @@ ___
 - The bubble keeps a 10 pixel margin to the screen edges and the taskbar and its shadow is smaller so it no longer overlaps the taskbar.
 - The Space key is labelled *Space* in the shortcut instead of its localized Windows name.
 - The model download script retries a download that was interrupted before.
+- The source code is split from one 5,300-line `main.rs` into modules under `src/` and `src/ui/`. The behavior is unchanged.
 
 ### Fixed
 

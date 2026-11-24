@@ -177,7 +177,35 @@ ___
 
 ## How it works
 
-Nemotron Bubble is a single-file Rust app built directly on the Win32 API. There is no Electron and no web view. It ships as one exe with ONNX Runtime linked in, plus `DirectML.dll` for GPU processing. Microphone audio is captured with [`cpal`](https://crates.io/crates/cpal), streamed through the [`parakeet-rs`](https://crates.io/crates/parakeet-rs) Nemotron ONNX model, and injected into the focused window as Unicode keystrokes. The floating bubble is a **per-pixel-alpha layered window** drawn by a small software canvas with signed-distance anti-aliasing, so the pill, shadow, and waveform stay crisp and smooth.
+Nemotron Bubble is a Rust app built directly on the Win32 API. There is no Electron and no web view. It ships as one exe with ONNX Runtime linked in, plus `DirectML.dll` for GPU processing. Microphone audio is captured with [`cpal`](https://crates.io/crates/cpal), streamed through the [`parakeet-rs`](https://crates.io/crates/parakeet-rs) Nemotron ONNX model, and injected into the focused window as Unicode keystrokes. The floating bubble is a **per-pixel-alpha layered window** drawn by a small software canvas with signed-distance anti-aliasing, so the pill, shadow, and waveform stay crisp and smooth.
+
+### Source layout
+
+| File | Content |
+| --- | --- |
+| `src/main.rs` | Startup, `--self-test`, the shared application state |
+| `src/settings.rs` | Persisted options, their choice types, loading and saving, file locations |
+| `src/history.rs` | Recent dictations and the state of the History list |
+| `src/model.rs` | Finding, checking and loading the speech model, GPU probing, languages |
+| `src/engine.rs` | The speech engine thread and recording control |
+| `src/audio.rs` | Microphone capture and resampling to 16 kHz |
+| `src/output.rs` | Clipboard, Ctrl+V and Unicode keystrokes |
+| `src/hotkey.rs` | The global shortcut |
+| `src/sound.rs` | Start and stop sound cues |
+| `src/diagnostics.rs` | Log file, crash logger, message boxes |
+| `src/util.rs` | Small Win32 helpers |
+| `src/assets.rs` | README art and exe icon export (`assets` feature only) |
+| `src/ui/canvas.rs` | Drawing toolkit: canvas, anti-aliased shapes, text, fonts |
+| `src/ui/bubble.rs` | The floating bubble: drawing, animation, placement, dragging |
+| `src/ui/settings_window/mod.rs` | The settings window frame: header, tab bar, placement, dispatch to the tabs |
+| `src/ui/settings_window/history_tab.rs` | The *History* tab |
+| `src/ui/settings_window/model_tab.rs` | The *Model* tab |
+| `src/ui/settings_window/settings_tab.rs` | The *Settings* tab |
+| `src/ui/settings_window/widgets.rs` | Controls shared by the tabs: toggles, buttons, segmented controls |
+| `src/ui/tray.rs` | Tray icon and tray menu |
+| `src/ui/window.rs` | Window class, message loop, message dispatch |
+
+Every module starts with `use crate::*;`, so all items are available in every file.
 
 ___
 
