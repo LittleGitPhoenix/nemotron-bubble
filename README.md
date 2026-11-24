@@ -26,7 +26,7 @@ Press your shortcut, speak, and your words appear at the cursor — powered by *
 - **Private and offline** — runs the Nemotron ONNX model locally. No internet, no accounts, no telemetry.
 - **Live waveform bubble** — a smooth, anti-aliased floating mic meter you can drag anywhere.
 - **Tray mode** — hide the bubble and watch the waveform pulse right in the taskbar tray instead.
-- **Recent dictations** — scrollable history with one-click *Copy Latest*.
+- **Recent dictations** — scrollable history; the icon next to each entry copies it.
 - **One clean clipboard copy on stop** — with optional auto-paste.
 - **Starts with Windows**, soft sound cues, model preloading — all toggleable.
 
