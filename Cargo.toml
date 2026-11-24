@@ -20,7 +20,9 @@ cpal = "0.15"
 crossbeam-channel = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 once_cell = "1"
-parakeet-rs = "0.4.4"
+# "directml": optional GPU inference via DirectML (any DirectX 12 GPU), see the
+# "Processing" setting. The app falls back to the CPU when no GPU is usable.
+parakeet-rs = { version = "0.4.4", features = ["directml"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 winreg = "0.52"

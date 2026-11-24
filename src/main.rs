@@ -7,7 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use once_cell::sync::OnceCell;
 use parakeet_rs::ort::environment::Environment;
-use parakeet_rs::{ExecutionConfig, Nemotron, NemotronMode};
+use parakeet_rs::{ExecutionConfig, ExecutionProvider, Nemotron, NemotronMode};
 use core::ffi::c_void;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -111,8 +111,9 @@ const HISTORY_EDIT_ID: usize = 3001;
 // Right card layout: the speech-model picker sits at the top, history below it.
 const MODEL_PICKER_TOP: i32 = 160;
 const LANGUAGE_ROW_TOP: i32 = 204;
-const HISTORY_BUTTONS_TOP: i32 = 256;
-const HISTORY_PANEL_TOP: i32 = 324;
+const COMPUTE_ROW_TOP: i32 = 250;
+const HISTORY_BUTTONS_TOP: i32 = 304;
+const HISTORY_PANEL_TOP: i32 = 372;
 const NEMOTRON_SAMPLE_RATE: f64 = 16_000.0;
 const NEMOTRON_CHUNK_SIZE: usize = 8_960; // 560 ms at 16 kHz.
 
@@ -124,6 +125,8 @@ const IDM_QUIT: usize = 1004;
 const IDM_MODEL_BASE: usize = 1100;
 // "Language" menus (tray submenu and the settings popup): one id per LANGUAGES entry.
 const IDM_LANG_BASE: usize = 1200;
+// Tray "Processing" submenu: one id per ComputeChoice, in ComputeChoice::ALL order.
+const IDM_COMPUTE_BASE: usize = 1300;
 /// App version from Cargo.toml; also embedded in the exe's version resource (build.rs).
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SETTINGS_TOGGLE_STARTUP: usize = 2001;
@@ -197,6 +200,52 @@ struct AppSettings {
     /// Spoken language for the multilingual model: a code from LANGUAGES, or
     /// "auto" to let the model detect it. Ignored by the English-only model.
     language: String,
+    /// Where the model runs: GPU (DirectML), CPU, or Auto (GPU, else CPU).
+    compute: ComputeChoice,
+}
+
+/// The "Processing" setting. Stored as a plain string in settings.json; unknown
+/// values fall back to the default (CPU).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+enum ComputeChoice {
+    /// The default: an integrated GPU is often slower than the CPU for these
+    /// small streaming chunks (measured: ~290 ms vs ~130 ms per chunk).
+    #[default]
+    Cpu,
+    /// GPU only; loading fails with an error when no usable GPU is found.
+    Gpu,
+    /// GPU via DirectML when available, otherwise the CPU.
+    Auto,
+}
+
+impl ComputeChoice {
+    /// Display order in the settings switch and the tray submenu.
+    const ALL: [ComputeChoice; 3] = [ComputeChoice::Cpu, ComputeChoice::Gpu, ComputeChoice::Auto];
+
+    fn label(self) -> &'static str {
+        match self {
+            ComputeChoice::Auto => "Auto",
+            ComputeChoice::Gpu => "GPU",
+            ComputeChoice::Cpu => "CPU",
+        }
+    }
+}
+
+impl From<String> for ComputeChoice {
+    fn from(value: String) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "gpu" => ComputeChoice::Gpu,
+            "auto" => ComputeChoice::Auto,
+            _ => ComputeChoice::Cpu,
+        }
+    }
+}
+
+impl From<ComputeChoice> for String {
+    fn from(value: ComputeChoice) -> Self {
+        value.label().to_ascii_lowercase()
+    }
 }
 
 /// Languages offered for the multilingual model: "auto" plus NVIDIA's
@@ -332,6 +381,7 @@ impl Default for AppSettings {
             model: ModelChoice::English,
             model_dir: String::new(),
             language: "auto".to_string(),
+            compute: ComputeChoice::Cpu,
         }
     }
 }
@@ -340,6 +390,28 @@ impl Default for AppSettings {
 struct HistoryItem {
     timestamp: String,
     text: String,
+    /// Where the dictation was processed: "CPU" or "GPU". Missing in older entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    processing: Option<String>,
+    /// Average inference time per 560 ms audio chunk, in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ms_per_chunk: Option<u32>,
+}
+
+impl HistoryItem {
+    /// Header line shown above the text, e.g. "Nov 24, 11:34 AM · CPU · 130 ms per chunk".
+    fn header(&self) -> String {
+        match (&self.processing, self.ms_per_chunk) {
+            (Some(device), Some(ms)) => format!("{} · {device} · {ms} ms per chunk", self.timestamp),
+            _ => self.timestamp.clone(),
+        }
+    }
+}
+
+/// Processing statistics of one dictation, stored with its history entry.
+struct DictationStats {
+    on_gpu: bool,
+    ms_per_chunk: f32,
 }
 
 #[derive(Debug)]
@@ -649,15 +721,30 @@ fn self_test() -> Result<()> {
     let settings = load_settings();
     println!("Model choice: {}", settings.model.label());
     println!("Language (multilingual only): {}", language_label(&settings.language));
-    let (mut model, model_dir) = load_nemotron(&settings)?;
+    println!("Processing setting: {}", settings.compute.label());
+    let loaded = load_nemotron(&settings)?;
+    let (mut model, model_dir) = (loaded.model, loaded.dir);
     model.reset();
     let mode = match model.mode() {
         NemotronMode::EnglishOnly => "English-only",
         NemotronMode::Multilingual => "Multilingual",
     };
+    // A few chunks of silence: the first one includes warm-up, so time the rest.
     let _ = model.transcribe_chunk(&vec![0.0; NEMOTRON_CHUNK_SIZE])?;
+    const TIMED_CHUNKS: u32 = 5;
+    let started = Instant::now();
+    for _ in 0..TIMED_CHUNKS {
+        let _ = model.transcribe_chunk(&vec![0.0; NEMOTRON_CHUNK_SIZE])?;
+    }
+    let per_chunk_ms = started.elapsed().as_secs_f32() * 1000.0 / TIMED_CHUNKS as f32;
     println!("Nemotron loaded: {mode}");
+    println!("Running on: {}", if loaded.on_gpu { "GPU (DirectML)" } else { "CPU" });
+    println!("Time per 560 ms audio chunk: {per_chunk_ms:.0} ms");
     println!("Model dir: {}", model_dir.display());
+    log_info(&format!(
+        "Self-test: {mode} on the {}, {per_chunk_ms:.0} ms per 560 ms chunk",
+        if loaded.on_gpu { "GPU" } else { "CPU" }
+    ));
     Ok(())
 }
 
@@ -807,6 +894,42 @@ fn select_model(app: &Arc<AppState>, choice: ModelChoice) {
             format!("Switching to {} model...", choice.label())
         } else {
             format!("{} model selected. It loads on first dictation.", choice.label())
+        };
+    });
+}
+
+/// Switch between GPU and CPU processing. The device is fixed when a model is
+/// loaded, so this unloads it and (with preloading on) loads it again.
+fn select_compute(app: &Arc<AppState>, choice: ComputeChoice) {
+    if app.recording.load(Ordering::SeqCst) {
+        update_ui(app, |ui| {
+            ui.status = "Stop dictation before switching processing.".to_string();
+        });
+        return;
+    }
+    let settings = {
+        let mut settings = app
+            .settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if settings.compute == choice {
+            return;
+        }
+        settings.compute = choice;
+        settings.clone()
+    };
+    save_settings(&settings);
+    log_info(&format!("Processing changed to {}", choice.label()));
+
+    let _ = app.engine_tx.send(EngineCommand::Unload);
+    if settings.preload_model {
+        let _ = app.engine_tx.send(EngineCommand::Preload);
+    }
+    update_ui(app, |ui| {
+        ui.status = if settings.preload_model {
+            format!("Reloading the model for processing: {}...", choice.label())
+        } else {
+            format!("Processing: {}. Applies on the next dictation.", choice.label())
         };
     });
 }
@@ -964,7 +1087,7 @@ fn save_history(history: &[HistoryItem]) {
     }
 }
 
-fn add_history(app: &Arc<AppState>, text: String) {
+fn add_history(app: &Arc<AppState>, text: String, stats: Option<DictationStats>) {
     let clean = text.trim().to_string();
     if clean.is_empty() {
         return;
@@ -979,6 +1102,10 @@ fn add_history(app: &Arc<AppState>, text: String) {
         HistoryItem {
             timestamp: Local::now().format("%b %-d, %-I:%M %p").to_string(),
             text: clean,
+            processing: stats
+                .as_ref()
+                .map(|s| if s.on_gpu { "GPU" } else { "CPU" }.to_string()),
+            ms_per_chunk: stats.as_ref().map(|s| s.ms_per_chunk.round() as u32),
         },
     );
     history.truncate(limit);
@@ -1064,7 +1191,7 @@ fn update_history_edit(app: &Arc<AppState>) {
     }
     let text = history_snapshot(app)
         .iter()
-        .map(|item| format!("{}\r\n{}\r\n", item.timestamp, item.text.trim()))
+        .map(|item| format!("{}\r\n{}\r\n", item.header(), item.text.trim()))
         .collect::<Vec<_>>()
         .join("\r\n");
     unsafe {
@@ -1377,6 +1504,10 @@ unsafe extern "system" fn wnd_proc(
 fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
     let mut model: Option<Nemotron> = None;
     let mut model_path = PathBuf::new();
+    let mut on_gpu = false;
+    // Inference time of the current dictation, logged on stop (GPU vs CPU check).
+    let mut chunk_time = Duration::ZERO;
+    let mut chunk_count = 0u32;
     let mut active = false;
     let mut audio_buffer = Vec::<f32>::with_capacity(NEMOTRON_CHUNK_SIZE * 2);
     // Set after a failed background preload so that unrelated settings toggles
@@ -1395,10 +1526,15 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                     ui.model_status = "Loading...".to_string();
                 });
                 match load_nemotron(&settings_snapshot(&app)) {
-                    Ok((loaded, path)) => {
-                        let label = model_status_label(&loaded, &settings_snapshot(&app).language);
-                        model = Some(loaded);
-                        model_path = path;
+                    Ok(loaded) => {
+                        let label = model_status_label(
+                            &loaded.model,
+                            &settings_snapshot(&app).language,
+                            loaded.on_gpu,
+                        );
+                        model = Some(loaded.model);
+                        model_path = loaded.dir;
+                        on_gpu = loaded.on_gpu;
                         update_ui(&app, |ui| {
                             ui.status = "Ready. Nemotron loaded. Ctrl+Space toggles.".to_string();
                             ui.model_dir = model_path.display().to_string();
@@ -1438,7 +1574,7 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                     if loaded.mode() == NemotronMode::Multilingual {
                         match apply_language(loaded, &language) {
                             Ok(()) => {
-                                let label = model_status_label(loaded, &language);
+                                let label = model_status_label(loaded, &language, on_gpu);
                                 update_ui(&app, |ui| ui.model_status = label);
                             }
                             Err(err) => log_error(&format!("{err:#}")),
@@ -1448,19 +1584,25 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
             }
             Ok(EngineCommand::Start) => {
                 audio_buffer.clear();
+                chunk_time = Duration::ZERO;
+                chunk_count = 0;
                 if model.is_none() {
                     update_ui(&app, |ui| {
                         ui.status = "Loading Nemotron model...".to_string();
                         ui.model_status = "Loading...".to_string();
                     });
                     match load_nemotron(&settings_snapshot(&app)) {
-                        Ok((loaded, path)) => {
+                        Ok(loaded) => {
                             preload_failed = false;
-                            let label =
-                                model_status_label(&loaded, &settings_snapshot(&app).language);
+                            let label = model_status_label(
+                                &loaded.model,
+                                &settings_snapshot(&app).language,
+                                loaded.on_gpu,
+                            );
                             update_ui(&app, |ui| ui.model_status = label);
-                            model = Some(loaded);
-                            model_path = path;
+                            model = Some(loaded.model);
+                            model_path = loaded.dir;
+                            on_gpu = loaded.on_gpu;
                         }
                         Err(err) => {
                             report_model_error(&err);
@@ -1500,7 +1642,11 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                 audio_buffer.extend(samples);
                 while audio_buffer.len() >= NEMOTRON_CHUNK_SIZE {
                     let chunk: Vec<f32> = audio_buffer.drain(..NEMOTRON_CHUNK_SIZE).collect();
-                    match model.transcribe_chunk(&chunk) {
+                    let chunk_started = Instant::now();
+                    let result = model.transcribe_chunk(&chunk);
+                    chunk_time += chunk_started.elapsed();
+                    chunk_count += 1;
+                    match result {
                         Ok(text) if !text.is_empty() => {
                             let settings = settings_snapshot(&app);
                             let live_type = settings.live_type_into_cursor;
@@ -1564,6 +1710,20 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                             }
                         }
 
+                        let stats = (chunk_count > 0).then(|| DictationStats {
+                            on_gpu,
+                            ms_per_chunk: chunk_time.as_secs_f32() * 1000.0 / chunk_count as f32,
+                        });
+                        if let Some(stats) = &stats {
+                            log_info(&format!(
+                                "Dictation: {chunk_count} chunks, {:.0} ms per 560 ms chunk on the {}",
+                                stats.ms_per_chunk,
+                                if stats.on_gpu { "GPU" } else { "CPU" }
+                            ));
+                        }
+                        chunk_time = Duration::ZERO;
+                        chunk_count = 0;
+
                         let final_text = model.get_transcript();
                         let has_final = !final_text.trim().is_empty();
                         let settings = settings_snapshot(&app);
@@ -1574,7 +1734,7 @@ fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         };
 
                         if has_final {
-                            add_history(&app, final_text.clone());
+                            add_history(&app, final_text.clone(), stats);
                             // Paste-on-stop already writes the clipboard via Ctrl+V, so
                             // only do a standalone copy when not pasting — never both.
                             if settings.paste_final_on_stop {
@@ -1655,14 +1815,15 @@ fn ort_environment() -> Result<Environment> {
         .map_err(|err| anyhow!("failed to initialize ONNX Runtime: {err}"))
 }
 
-fn model_status_label(model: &Nemotron, language: &str) -> String {
-    match model.mode() {
+fn model_status_label(model: &Nemotron, language: &str, on_gpu: bool) -> String {
+    let model_part = match model.mode() {
         NemotronMode::EnglishOnly => "Loaded: English".to_string(),
         NemotronMode::Multilingual if normalize_language(language) == "auto" => {
             "Loaded: Multilingual (detects language)".to_string()
         }
         NemotronMode::Multilingual => format!("Loaded: Multilingual ({})", language_label(language)),
-    }
+    };
+    format!("{model_part} · {}", if on_gpu { "GPU" } else { "CPU" })
 }
 
 /// Point the multilingual model at `language` (a LANGUAGES code; "auto" lets
@@ -1676,20 +1837,82 @@ fn apply_language(model: &mut Nemotron, language: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_nemotron(settings: &AppSettings) -> Result<(Nemotron, PathBuf)> {
+/// Check that DirectML can open a GPU, by registering it (with "fail if
+/// unavailable") on a throwaway session builder. parakeet-rs itself registers
+/// DirectML with a silent CPU fallback, so without this check "GPU" could quietly
+/// run on the CPU.
+fn probe_directml(environment: &Environment) -> Result<()> {
+    use parakeet_rs::ort::ep::DirectML;
+    use parakeet_rs::ort::session::Session;
+    let builder = Session::builder(environment).map_err(|err| anyhow!("{err}"))?;
+    builder
+        .with_execution_providers([DirectML::default().build().error_on_failure()])
+        .map_err(|err| anyhow!("{err}"))?;
+    Ok(())
+}
+
+fn load_with_device(model_dir: &std::path::Path, on_gpu: bool) -> Result<Nemotron> {
+    let mut exec_config = ExecutionConfig::new().with_environment(ort_environment()?);
+    if on_gpu {
+        // DirectML requires memory patterns off and sequential execution.
+        exec_config = exec_config
+            .with_execution_provider(ExecutionProvider::DirectML)
+            .with_custom_configure(|builder| {
+                Ok(builder
+                    .with_memory_pattern(false)?
+                    .with_parallel_execution(false)?)
+            });
+    }
+    Nemotron::from_pretrained(model_dir, Some(exec_config))
+        .map_err(|err| anyhow!("failed to load {}: {err}", model_dir.display()))
+}
+
+/// A loaded model plus where it came from and where it runs.
+struct LoadedModel {
+    model: Nemotron,
+    dir: PathBuf,
+    on_gpu: bool,
+}
+
+fn load_nemotron(settings: &AppSettings) -> Result<LoadedModel> {
     let choice = settings.model;
     let model_dir = find_model_dir(choice, &settings.model_dir)?;
     log_info(&format!(
-        "Loading Nemotron ({} selected) from {}",
+        "Loading Nemotron ({} selected, processing: {}) from {}",
         choice.label(),
+        settings.compute.label(),
         model_dir.display()
     ));
     check_model_files(&model_dir)?;
 
     let started = Instant::now();
-    let exec_config = ExecutionConfig::new().with_environment(ort_environment()?);
-    let mut model = Nemotron::from_pretrained(&model_dir, Some(exec_config))
-        .map_err(|err| anyhow!("failed to load {}: {err}", model_dir.display()))?;
+    let gpu_usable = match settings.compute {
+        ComputeChoice::Cpu => false,
+        ComputeChoice::Gpu => {
+            probe_directml(&ort_environment()?).map_err(|err| {
+                anyhow!(
+                    "GPU processing was selected, but no usable GPU was found (DirectML: {err}).\n\n\
+                     Choose Auto or CPU under Processing in the settings."
+                )
+            })?;
+            true
+        }
+        ComputeChoice::Auto => match probe_directml(&ort_environment()?) {
+            Ok(()) => true,
+            Err(err) => {
+                log_info(&format!("No usable GPU (DirectML: {err}); using the CPU."));
+                false
+            }
+        },
+    };
+    let (mut model, on_gpu) = match load_with_device(&model_dir, gpu_usable) {
+        Ok(model) => (model, gpu_usable),
+        Err(err) if gpu_usable && settings.compute == ComputeChoice::Auto => {
+            log_error(&format!("Loading on the GPU failed, retrying on the CPU: {err:#}"));
+            (load_with_device(&model_dir, false)?, false)
+        }
+        Err(err) => return Err(err),
+    };
 
     let mode = match model.mode() {
         NemotronMode::EnglishOnly => "English-only",
@@ -1699,7 +1922,8 @@ fn load_nemotron(settings: &AppSettings) -> Result<(Nemotron, PathBuf)> {
         apply_language(&mut model, &settings.language)?;
     }
     log_info(&format!(
-        "Nemotron loaded ({mode}) in {:.1}s",
+        "Nemotron loaded ({mode}, on the {}) in {:.1}s",
+        if on_gpu { "GPU via DirectML" } else { "CPU" },
         started.elapsed().as_secs_f32()
     ));
     let mismatch = matches!(
@@ -1715,7 +1939,11 @@ fn load_nemotron(settings: &AppSettings) -> Result<(Nemotron, PathBuf)> {
         ));
     }
 
-    Ok((model, model_dir))
+    Ok(LoadedModel {
+        model,
+        dir: model_dir,
+        on_gpu,
+    })
 }
 
 /// Catch the most common broken-download cases (missing weights file, or a file
@@ -2594,6 +2822,11 @@ fn handle_command(command: usize) {
                 select_language(app, LANGUAGES[id - IDM_LANG_BASE].0);
             }
         }
+        id if (IDM_COMPUTE_BASE..IDM_COMPUTE_BASE + ComputeChoice::ALL.len()).contains(&id) => {
+            if let Some(app) = APP.get() {
+                select_compute(app, ComputeChoice::ALL[id - IDM_COMPUTE_BASE]);
+            }
+        }
         IDM_QUIT => unsafe {
             let Some(app) = APP.get() else {
                 return;
@@ -2748,6 +2981,13 @@ fn handle_settings_click(x: i32, y: i32) {
     for choice in ModelChoice::ALL {
         if settings_model_rect(choice).contains(x, y) {
             select_model(app, choice);
+            return;
+        }
+    }
+
+    for choice in ComputeChoice::ALL {
+        if settings_compute_rect(choice).contains(x, y) {
+            select_compute(app, choice);
             return;
         }
     }
@@ -3443,6 +3683,23 @@ unsafe fn render_settings_canvas(
         // language button (same look as the shortcut button)
         draw_button_bg(buf, cw, ch, settings_language_rect(), false);
 
+        // processing segmented control (Auto / GPU / CPU)
+        let track = settings_compute_track_rect();
+        fill_round_rect(
+            buf,
+            cw,
+            ch,
+            track.left as f32,
+            track.top as f32,
+            (track.right - track.left) as f32,
+            (track.bottom - track.top) as f32,
+            13.0,
+            (40, 44, 54),
+            (36, 40, 49),
+            1.0,
+        );
+        draw_button_bg(buf, cw, ch, settings_compute_rect(settings.compute), true);
+
         for row in &rows {
             draw_toggle(buf, cw, ch, settings_toggle_rect(row.id), row.enabled);
         }
@@ -3516,6 +3773,23 @@ unsafe fn render_settings_canvas(
         settings_language_rect(),
     );
 
+    // processing row: label + detail on the left, Auto / GPU / CPU on the right
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, "Processing", right_card_x as i32 + 16, COMPUTE_ROW_TOP + 1, 130, 20);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(124, 134, 148));
+    text_left(dc, "Auto: GPU, else CPU.", right_card_x as i32 + 16, COMPUTE_ROW_TOP + 21, 136, 18);
+    SelectObject(dc, ui_font() as _);
+    for choice in ComputeChoice::ALL {
+        if choice == settings.compute {
+            SetTextColor(dc, rgb(245, 248, 252));
+        } else {
+            SetTextColor(dc, rgb(184, 192, 205));
+        }
+        text_center(dc, choice.label(), settings_compute_rect(choice));
+    }
+
     // shortcut row
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(233, 238, 244));
@@ -3581,7 +3855,7 @@ unsafe fn render_settings_canvas(
             }
             SelectObject(dc, small_font() as _);
             SetTextColor(dc, rgb(140, 152, 170));
-            text_left(dc, &item.timestamp, ex + 14, y, text_w, 16);
+            text_left(dc, &item.header(), ex + 14, y, text_w, 16);
             y += 18;
             SelectObject(dc, ui_font() as _);
             SetTextColor(dc, rgb(216, 223, 233));
@@ -3819,6 +4093,22 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         // DestroyMenu(menu) below also destroys this attached submenu.
         AppendMenuW(menu, MF_POPUP, model_menu as usize, model_text.as_ptr());
     }
+    // "Processing" submenu: Auto / GPU / CPU, current one checked.
+    let compute_menu = CreatePopupMenu();
+    let compute_text = wide_null(&format!("Processing: {}", menu_settings.compute.label()));
+    if compute_menu != null_mut() {
+        for (index, choice) in ComputeChoice::ALL.iter().enumerate() {
+            let mut flags = MF_STRING;
+            if *choice == menu_settings.compute {
+                flags |= MF_CHECKED;
+            }
+            if recording {
+                flags |= MF_GRAYED;
+            }
+            let label = wide_null(choice.label());
+            AppendMenuW(compute_menu, flags, IDM_COMPUTE_BASE + index, label.as_ptr());
+        }
+    }
     let language_menu = build_language_menu(&menu_settings, recording);
     let language_text = wide_null(&format!(
         "Language: {}",
@@ -3831,6 +4121,9 @@ unsafe fn show_tray_menu(hwnd: HWND) {
             MF_POPUP | MF_GRAYED
         };
         AppendMenuW(menu, flags, language_menu as usize, language_text.as_ptr());
+    }
+    if compute_menu != null_mut() {
+        AppendMenuW(menu, MF_POPUP, compute_menu as usize, compute_text.as_ptr());
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, IDM_QUIT, quit_text.as_ptr());
@@ -3868,6 +4161,32 @@ fn settings_clear_history_rect() -> RectI {
         top: HISTORY_BUTTONS_TOP,
         right: 600,
         bottom: HISTORY_BUTTONS_TOP + 32,
+    }
+}
+
+/// Background track of the Processing (Auto / GPU / CPU) segmented control.
+fn settings_compute_track_rect() -> RectI {
+    RectI {
+        left: 540,
+        top: COMPUTE_ROW_TOP + 4,
+        right: SETTINGS_WIDTH - 36,
+        bottom: COMPUTE_ROW_TOP + 36,
+    }
+}
+
+/// One segment of the Processing control.
+fn settings_compute_rect(choice: ComputeChoice) -> RectI {
+    let track = settings_compute_track_rect();
+    let index = ComputeChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0) as i32;
+    let count = ComputeChoice::ALL.len() as i32;
+    let width = (track.right - track.left) / count;
+    let left = track.left + index * width;
+    let right = if index == count - 1 { track.right } else { left + width };
+    RectI {
+        left,
+        top: track.top,
+        right,
+        bottom: track.bottom,
     }
 }
 
@@ -4218,6 +4537,8 @@ fn demo_history() -> Vec<HistoryItem> {
     let make = |timestamp: &str, text: &str| HistoryItem {
         timestamp: timestamp.to_string(),
         text: text.to_string(),
+        processing: Some("CPU".to_string()),
+        ms_per_chunk: Some(130),
     };
     vec![
         make("Today, 2:14 PM", "Let's ship the new dictation bubble — it looks fantastic."),
