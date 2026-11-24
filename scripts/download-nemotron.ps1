@@ -33,9 +33,20 @@ foreach ($File in $Files) {
         continue
     }
 
+    # Download to a .part file and only rename on success, so an interrupted
+    # download is retried next run instead of being skipped as "already exists".
+    $Partial = "$Target.part"
+    if (Test-Path $Partial) { Remove-Item $Partial -Force }
+
     $Url = "$BaseUrl/$File`?download=true"
     Write-Host "Downloading $File..."
-    Invoke-WebRequest -Uri $Url -OutFile $Target -MaximumRedirection 10
+    Invoke-WebRequest -Uri $Url -OutFile $Partial -MaximumRedirection 10
+    Move-Item -Path $Partial -Destination $Target -Force
+}
+
+foreach ($File in $Files) {
+    $Item = Get-Item (Join-Path $ModelDir $File)
+    Write-Host ("  {0,-20} {1,15:N0} bytes" -f $File, $Item.Length)
 }
 
 Write-Host "Nemotron files are ready in $ModelDir"

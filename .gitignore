@@ -1,2 +1,7 @@
 /target/
 /models/
+
+# Local cross-build helpers, specific to one machine (WSL distro name, paths)
+/scripts/build-wsl.ps1
+/scripts/build-wsl.sh
+/.github/instructions/user.*.instructions.md
