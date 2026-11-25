@@ -80,8 +80,8 @@ if ($Settings)
 	($Settings | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $values[$_.Name] = $_.Value }
 }
 $values['start_with_windows'] = $false
-# UTF-8 WITHOUT a byte order mark: the app rejects a BOM and then falls back to its defaults,
-# which include start_with_windows = true (Set-Content -Encoding UTF8 writes a BOM in PowerShell 5.1).
+# UTF-8 without a byte order mark, the same way the app writes it. The app also accepts a BOM,
+# but older builds rejected one and fell back to their defaults (start_with_windows = true).
 [System.IO.File]::WriteAllText($settingsPath, ($values | ConvertTo-Json), (New-Object System.Text.UTF8Encoding $false))
 
 # Models: the app also searches models\ in its working directory (find_model_dir), so the test
@@ -103,7 +103,7 @@ if ($UseModels)
 
 if ($NoStart) { "prepared $WorkDir. Run the exe with the working directory $workingDirectory."; return }
 
-# The app writes its autostart entry at every start. Remember it, so a test copy that
+# The app applies its autostart setting at every start. Remember the entry, so a test copy that
 # ignored its settings is caught before it can do more.
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $autostartBefore = (Get-ItemProperty $runKey -Name NemotronBubble -ErrorAction SilentlyContinue).NemotronBubble
@@ -118,7 +118,8 @@ for ($i = 0; $i -lt 50; $i++)
 }
 if ($process.HasExited) { throw "The test instance exited (code $($process.ExitCode)). See $logPath." }
 
-# A test copy runs with start_with_windows = false, which REMOVES the entry. Put the user's
+# A test copy runs with start_with_windows = false. The app only removes an entry that points to
+# its own exe, so the user's entry should survive. As a safety net, put the user's
 # entry back (or remove one the test copy created), so tests never change the autostart.
 $autostartAfter = (Get-ItemProperty $runKey -Name NemotronBubble -ErrorAction SilentlyContinue).NemotronBubble
 if ($autostartAfter -ne $autostartBefore)
