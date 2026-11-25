@@ -258,7 +258,9 @@ impl From<ModelChoice> for String {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            start_with_windows: true,
+            // Off by default: the app is portable and may be tried out and deleted
+            // or moved again, so it must not register itself without being asked.
+            start_with_windows: false,
             preload_model: true,
             // Default to the safe clipboard path: live keystroke injection only behaves
             // in real text fields, so it is opt-in. On stop we paste once (one Ctrl+V).
@@ -294,14 +296,20 @@ pub(crate) fn apply_startup_setting(enabled: bool) {
         return;
     };
 
+    let Ok(exe) = env::current_exe() else {
+        return;
+    };
+    let value = format!("\"{}\"", exe.display());
     if enabled {
-        let Ok(exe) = env::current_exe() else {
-            return;
-        };
-        let value = format!("\"{}\"", exe.display());
         let _ = run_key.set_value("NemotronBubble", &value);
     } else {
-        let _ = run_key.delete_value("NemotronBubble");
+        // Only remove an entry that starts this exe. Another copy of the portable
+        // app in a different folder may own it, and a copy that is merely tried
+        // out (autostart off by default) must not unregister that one.
+        let current: Result<String, _> = run_key.get_value("NemotronBubble");
+        if current.is_ok_and(|current| current.eq_ignore_ascii_case(&value)) {
+            let _ = run_key.delete_value("NemotronBubble");
+        }
     }
 }
 
@@ -387,7 +395,7 @@ pub(crate) fn toggle_setting(app: &Arc<AppState>, id: usize) {
 
 pub(crate) fn load_settings() -> AppSettings {
     let path = settings_path();
-    let Ok(json) = fs::read_to_string(&path) else {
+    let Ok(json) = read_text_file(&path) else {
         // First start: no settings yet, so pick the model from what is installed.
         let mut settings = AppSettings::default();
         settings.model = detect_model_choice(&settings.model_dir);

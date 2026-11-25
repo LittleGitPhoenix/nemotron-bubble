@@ -39,7 +39,7 @@ pub(crate) fn history_snapshot(app: &Arc<AppState>) -> Vec<HistoryItem> {
 
 pub(crate) fn load_history(limit: usize) -> Vec<HistoryItem> {
     let path = history_path();
-    let mut history = fs::read_to_string(path)
+    let mut history = read_text_file(&path)
         .ok()
         .and_then(|json| serde_json::from_str::<Vec<HistoryItem>>(&json).ok())
         .unwrap_or_default();

@@ -34,12 +34,14 @@ ___
 - The bubble keeps a 10 pixel margin to the screen edges and the taskbar and its shadow is smaller so it no longer overlaps the taskbar.
 - The Space key is labelled *Space* in the shortcut instead of its localized Windows name.
 - The source code is split from one 5,300-line `main.rs` into modules under `src/` and `src/ui/`. The behavior is unchanged.
+- *Start with Windows* is off by default, because a portable app that is only tried out should not register itself. Turning it off only removes the autostart entry if it points to this copy of the exe, so another copy in a different folder keeps its entry.
 
 ### Fixed
 
 - The multilingual model crashed while loading, which left the app without speech recognition.
 - With both models installed, the English model was always loaded and the multilingual one could not be chosen.
 - The app quit silently when no microphone was available. It now shows a warning and retries when dictation starts.
+- A `settings.json` that an editor saved with a byte order mark (UTF-8 or UTF-16) was rejected, so the app fell back to the default settings. Settings, history and `model-info.json` are now read with or without one.
 
 ### Removed
 

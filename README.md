@@ -157,7 +157,9 @@ log\       nemotron-bubble.log, crash.log
 models\    nemotron\, nemotron_multi\
 ```
 
-The folder must be writable, so don't put it under `C:\Program Files`. The only thing outside it is the *Start with Windows* entry (`HKCU\...\CurrentVersion\Run\NemotronBubble`), which the app removes when you turn that setting off.
+The folder must be writable, so don't put it under `C:\Program Files`. The only thing outside it is the *Start with Windows* entry (`HKCU\...\CurrentVersion\Run\NemotronBubble`), which is off by default. The app removes it again when you turn that setting off, but only if it points to this copy of the exe, so trying out a second copy never unregisters the first one.
+
+The `settings.json` can be edited by hand. It is read with or without a UTF-8 byte order mark (and as UTF-16 with one), so the encoding your editor saves with does not matter.
 
 ___
 

@@ -153,7 +153,7 @@ fn file_modified(meta: &fs::Metadata) -> u64 {
 }
 
 fn read_manifest(dir: &Path) -> Option<ModelManifest> {
-    let json = fs::read_to_string(dir.join(MANIFEST_NAME)).ok()?;
+    let json = read_text_file(&dir.join(MANIFEST_NAME)).ok()?;
     serde_json::from_str(&json).ok()
 }
 

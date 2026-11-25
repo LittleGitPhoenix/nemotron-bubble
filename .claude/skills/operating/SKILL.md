@@ -24,7 +24,7 @@ The user usually keeps a stable release running. **That is no reason to stop or 
 | Shared resource | What happens |
 | --- | --- |
 | Global shortcut, Enter while dictating | The instance started first owns the key, the test copy logs "already taken". Scripted tests do not use the shortcut. |
-| Windows autostart entry | Every start writes it. `Start-Nemotron.ps1` restores it afterwards. |
+| Windows autostart entry | Every start applies the setting, but a copy only removes an entry that points to its own exe. `Start-Nemotron.ps1` restores the entry afterwards as a safety net. |
 | Model RAM | About 2.5 GB per loaded model. Test copies start with `preload_model` false. |
 | Screen | A second bubble and tray icon appear while the test runs. |
 
@@ -76,8 +76,8 @@ The coordinates mirror the layout constants in `src/ui/settings_window/*.rs`. **
 - There are no UI Automation elements. Everything is custom-drawn into two windows of class `NemotronBubbleWindow`: the bubble (title "Nemotron Bubble", it also receives the tray icon's messages) and the settings window ("Nemotron Bubble Settings", 392 x 816, no frame, so window and client pixels are the same). The scripts always find them by process id, because the user's own instance has the same class and titles.
 - A button-up without a preceding drag counts as a click. Popup menus (`TrackPopupMenu`) block the app until closed and only react to keys.
 - The settings window opens next to the bubble after a bubble click and next to the mouse cursor after a tray click.
-- The app applies `start_with_windows` at every start: true points the Windows autostart entry (`HKCU\...\Run\NemotronBubble`) at the running exe, false removes the entry. `Start-Nemotron.ps1` forces it to false and afterwards restores the entry to what it was before the start, so a test never changes the user's autostart. If it reports a restore, say so.
-- `settings.json` must be UTF-8 **without** BOM. With a BOM the app logs "settings.json is invalid", keeps the file as `.invalid` and runs with its defaults (autostart on, preload on). Never write it with `Set-Content -Encoding UTF8` in Windows PowerShell 5.1. `Start-Nemotron.ps1` writes it correctly and stops the instance if the app rejected it anyway.
+- The app applies `start_with_windows` at every start: true points the Windows autostart entry (`HKCU\...\Run\NemotronBubble`) at the running exe, false removes the entry only if it points to this exe. The default is false. `Start-Nemotron.ps1` forces it to false and afterwards restores the entry to what it was before the start, so a test never changes the user's autostart. If it reports a restore, say so.
+- `settings.json` is read as UTF-8 with or without BOM and as UTF-16 with BOM. The app always writes UTF-8 without BOM. A file that is not valid JSON makes the app log "settings.json is invalid", keep it as `.invalid` and run with its defaults (preload on). `Start-Nemotron.ps1` stops the instance if that happens.
 - A model that fails to load shows a message box on the user's screen. Keep `preload_model` false unless the test needs a loaded model and the models are linked.
 - Without `-UseModels` the test copy has no models. That is the right state for testing downloads (2.5 GB per model, so check the connection speed first). With `-UseModels` the models are the user's: never download, update or edit them in such a test, because an update writes where the model was found.
 - `preload_model` defaults to false in test copies, so no 2.5 GB load happens unless a test needs it. Load time is about 2 s on the CPU. Wait with `Get-State.ps1 -WaitFor 'Nemotron loaded'`.
