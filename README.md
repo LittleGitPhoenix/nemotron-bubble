@@ -23,6 +23,7 @@ This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike
 | **Multilingual model fixed** | The multilingual Nemotron model crashed while loading and left the app without speech recognition. It now loads reliably and can be selected next to the English model. |
 | **Bubble position presets** | Place the floating bubble in one of six positions (top or bottom, each left, center or right). The choice is saved. |
 | **Microphone selection** | Choose the input device in the app instead of in the Windows settings. *Windows default* follows a change of the Windows default device without restarting the app. |
+| **Model downloads in the app** | Download, resume and update both models on the *Model* tab instead of with a PowerShell script. Every file is verified with SHA-256, and the date of the model version is shown. |
 | **GPU support** | Run the model on the GPU via DirectML, which works with any DirectX 12 graphics adapter, or stay on the CPU. *Auto* tries the GPU first. |
 | **Language selection** | Tell the multilingual model which language you speak instead of letting it guess. 15 languages are offered, and NVIDIA rates this as more accurate than auto-detection. |
 | **Clear error feedback** | A missing microphone or a model that fails to load now shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
@@ -68,7 +69,7 @@ Click the bubble or the tray icon to open it. It appears next to whatever you cl
   </tr>
   <tr>
     <td valign="top">Recent dictations, newest first. The icon in front of each entry copies its text. The grey line shows when it was dictated, on which device, and the processing time per audio chunk. The trash bin clears the history.</td>
-    <td valign="top">Where the model runs (<b>Processing</b>), which model is loaded (<b>Speech model</b>, with what is loaded right now underneath), the spoken <b>Language</b> for the multilingual model, and <b>Preload Nemotron</b>.</td>
+    <td valign="top">Where the model runs (<b>Processing</b>), which model is loaded (<b>Speech model</b>, with what is loaded right now underneath), the model <b>Downloads</b> with their version and update check, the spoken <b>Language</b> for the multilingual model, and <b>Preload Nemotron</b>.</td>
     <td valign="top">The global shortcut, the <b>Microphone</b>, how text is inserted, sounds and animations, the silence auto-stop, and the floating bubble: whether it is shown, what a click on it does, and its <b>Bubble position</b>. The tab scrolls with the mouse wheel.</td>
   </tr>
 </table>
@@ -82,7 +83,7 @@ ___
 
 - **Windows 10 or 11** (64-bit).
 - A **microphone**.
-- **~2.4 GB free disk** for the speech model (downloaded once).
+- **About 2.5 GB free disk** per speech model (downloaded once, from the app).
 - **~3 GB of free RAM** while dictating, because the model runs entirely in memory.
 - To build from source: the [Rust toolchain](https://rustup.rs) (MSVC).
 
@@ -97,16 +98,24 @@ ___
 git clone https://github.com/LittleGitPhoenix/nemotron-bubble.git
 cd nemotron-bubble
 
-# One-time: download the Nemotron speech model (~2.4 GB) into models\nemotron\
-.\scripts\download-nemotron.ps1
-
 # Build and run
 cargo run --release
 ```
 
-Prefer the multilingual model? Run `.\scripts\download-nemotron.ps1 -Multilingual`. You can also point at a custom folder with `$env:NEMOTRON_MODEL_DIR = "C:\path\to\nemotron"`.
+Or grab a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page.
 
-Or grab a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page and run the download script next to it.
+On the first start no speech model is installed yet. Open the settings window, go to the *Model* tab and click **Download** next to *English* or *Multilingual* (about 2.5 GB each). The app downloads the files from Hugging Face into `models\` next to the exe, verifies them and loads the model. You can also point at a custom folder with `$env:NEMOTRON_MODEL_DIR = "C:\path\to\nemotron"`.
+
+### Downloads and updates
+
+| Element | Meaning |
+| --- | --- |
+| **Download** / **Resume** | Downloads a model. A cancelled or interrupted download resumes where it stopped. Every file is checked against the SHA-256 that Hugging Face publishes before it is used. |
+| **Version** | The date of the last upstream change of the model files, e.g. *2026-10-22*. Hugging Face has no version numbers for these exports. |
+| **Check for updates** | Asks Hugging Face for the current files and compares them with yours. Models downloaded by other means are hashed once for that (a few seconds). The app never contacts Hugging Face on its own. |
+| **Update** | Downloads only the files that changed and swaps them in. A loaded model is reloaded afterwards. The previous version is kept as a backup folder next to it, e.g. `models\nemotron_2026-10-22`. To go back, point *Predefined* at that folder or rename the folders. A backup takes the size of the files that changed, usually about 2.5 GB. Unchanged files are shared with the model folder via hard links. Delete backups by hand when they are no longer needed. |
+
+The version and the file hashes are kept in `model-info.json` inside each model folder.
 
 ### Choosing the model
 
@@ -159,7 +168,7 @@ ___
 | **Log file** | `log\nemotron-bubble.log` (next to the exe) records startup, microphone, model loading (folder, file sizes, mode, load time) and every error. The same lines go to `OutputDebugString`, so [DebugView](https://learn.microsoft.com/sysinternals/downloads/debugview) shows them live (filter on `NemotronBubble`). |
 | **Self-test** | Run `nemotron-bubble.exe --self-test` from a terminal. It loads the model, runs a few chunks, and prints the device, the processing time per chunk, or the full error. |
 | **No microphone** | The app shows a warning and keeps running in the tray. It reopens the microphone the next time you start dictation. |
-| **Model fails to load** | A dialog shows the reason. An interrupted download is the usual cause: `encoder.onnx.data` must be about 2.5 GB. Delete the bad file and rerun the script. |
+| **Model fails to load** | A dialog shows the reason. An interrupted download is the usual cause: `encoder.onnx.data` must be about 2.5 GB. On the *Model* tab, click **Check for updates**. A damaged file shows up as *Update available*, and **Update** downloads it again. |
 
 ___
 
@@ -189,6 +198,7 @@ Nemotron Bubble is a Rust app built directly on the Win32 API. There is no Elect
 | `src/settings.rs` | Persisted options, their choice types, loading and saving, file locations |
 | `src/history.rs` | Recent dictations and the state of the History list |
 | `src/model.rs` | Finding, checking and loading the speech model, GPU probing, languages |
+| `src/download.rs` | Model downloads from Hugging Face: update check, resume, SHA-256 verification |
 | `src/engine.rs` | The speech engine thread and recording control |
 | `src/audio.rs` | Microphone selection, capture and resampling to 16 kHz |
 | `src/output.rs` | Clipboard, Ctrl+V and Unicode keystrokes |

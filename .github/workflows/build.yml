@@ -31,4 +31,3 @@ jobs:
           name: nemotron-bubble
           path: |
             target/release/nemotron-bubble.exe
-            scripts/download-nemotron.ps1

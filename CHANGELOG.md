@@ -18,6 +18,7 @@ ___
 - Each history entry records the device and the average processing time per 560 ms audio chunk.
 - Six preset positions for the floating bubble (top or bottom, each left, center or right). The choice is saved in `settings.json`.
 - Microphone selection on the *Settings* tab. *Windows default* follows the Windows default input device, and a change there is picked up at the next dictation start without restarting the app. A selected device that is not connected falls back to the Windows default until it is back.
+- Model downloads on the *Model* tab, replacing the PowerShell download script. Downloads can be cancelled and resumed, and every file is verified with the SHA-256 published by Hugging Face. Each model shows the date of its upstream version, and *Check for updates* compares the installed files with Hugging Face on request. An update only downloads the files that changed and keeps the previous version in a backup folder such as `models\nemotron_2026-10-22`.
 - A log file `log\nemotron-bubble.log` with startup, microphone, model loading and all errors. The same lines go to `OutputDebugString` for DebugView.
 - Messages for a missing microphone and for a model that fails to load.
 - The new `--self-test` parameter prints to the console and reports the device and the processing time per chunk.
@@ -32,7 +33,6 @@ ___
 - The app is portable. Settings, history and sounds are stored in `config\` and the logs in `log\` next to the exe instead of in `%APPDATA%`.
 - The bubble keeps a 10 pixel margin to the screen edges and the taskbar and its shadow is smaller so it no longer overlaps the taskbar.
 - The Space key is labelled *Space* in the shortcut instead of its localized Windows name.
-- The model download script retries a download that was interrupted before.
 - The source code is split from one 5,300-line `main.rs` into modules under `src/` and `src/ui/`. The behavior is unchanged.
 
 ### Fixed
@@ -40,12 +40,17 @@ ___
 - The multilingual model crashed while loading, which left the app without speech recognition.
 - With both models installed, the English model was always loaded and the multilingual one could not be chosen.
 - The app quit silently when no microphone was available. It now shows a warning and retries when dictation starts.
-- An interrupted model download left a truncated file behind that the download script then skipped.
+
+### Removed
+
+- `scripts/download-nemotron.ps1`. Models are downloaded on the *Model* tab.
 
 ### References
 
 ⚪ embed-resource **3.0.12**  
 🔵 parakeet-rs ~~0.3.6~~ → **0.4.4**  
+⚪ sha2 **0.10.9**  
+⚪ ureq **3.3.0**  
 ___
 
 ## 0.1.0

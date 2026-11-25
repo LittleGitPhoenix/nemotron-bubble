@@ -96,8 +96,25 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
                     scroll: 0,
                     microphone_in_use: Some("Microphone (USB Audio)".to_string()),
                 };
+                // Downloads: English halfway through its download, Multilingual installed and current.
+                let downloads = [
+                    ModelDownloadState {
+                        activity: DownloadActivity::Downloading {
+                            done: 1_032_000_000,
+                            total: 2_517_642_476,
+                        },
+                        ..ModelDownloadState::default()
+                    },
+                    ModelDownloadState {
+                        installed_dir: Some(PathBuf::from("models")),
+                        installed_bytes: 2_597_582_765,
+                        local_date: Some("2026-10-22".to_string()),
+                        up_to_date: Some(true),
+                        ..ModelDownloadState::default()
+                    },
+                ];
                 unsafe {
-                    render_settings_canvas(&mut canvas, &settings, status, &view, &settings_view, false, tab)
+                    render_settings_canvas(&mut canvas, &settings, status, &view, &settings_view, &downloads, false, tab)
                 };
                 let rgba = settings_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
                 write_png(&dir.join(name), cw as u32, ch as u32, &rgba)?;
