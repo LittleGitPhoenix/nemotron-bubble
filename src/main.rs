@@ -7,6 +7,7 @@
 mod assets;
 mod audio;
 mod diagnostics;
+mod download;
 mod engine;
 mod history;
 mod hotkey;
@@ -21,6 +22,7 @@ mod util;
 use assets::*;
 use audio::*;
 use diagnostics::*;
+use download::*;
 use engine::*;
 use history::*;
 use hotkey::*;
@@ -31,7 +33,7 @@ use sound::*;
 use ui::*;
 use util::*;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Receiver, Sender, bounded};
@@ -44,7 +46,7 @@ use std::cell::RefCell;
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -145,6 +147,10 @@ pub(crate) struct AppState {
     pub(crate) settings_tab: AtomicUsize,
     /// Scroll offset (px) of the Settings tab.
     pub(crate) settings_scroll: AtomicI32,
+    /// Model tab downloads: one state per DOWNLOADABLE_MODELS entry, and the
+    /// cancel request for the running download (only one runs at a time).
+    pub(crate) downloads: Mutex<Vec<ModelDownloadState>>,
+    pub(crate) download_cancel: AtomicBool,
     pub(crate) enter_pending: AtomicBool,
     pub(crate) drag: Mutex<Option<DragState>>,
     pub(crate) settings: Mutex<AppSettings>,
@@ -238,6 +244,8 @@ pub(crate) fn run_app() -> Result<()> {
         capturing_hotkey: AtomicBool::new(false),
         settings_tab: AtomicUsize::new(TAB_HISTORY),
         settings_scroll: AtomicI32::new(0),
+        downloads: Mutex::new(vec![ModelDownloadState::default(); DOWNLOADABLE_MODELS.len()]),
+        download_cancel: AtomicBool::new(false),
         enter_pending: AtomicBool::new(false),
         drag: Mutex::new(None),
         settings: Mutex::new(settings),
@@ -269,6 +277,7 @@ pub(crate) fn run_app() -> Result<()> {
             ui.status = "No microphone available. Connect one, then start dictation.".to_string();
         });
     }
+    refresh_local_model_state(&app);
     if settings_snapshot(&app).preload_model {
         let _ = app.engine_tx.send(EngineCommand::Preload);
     }

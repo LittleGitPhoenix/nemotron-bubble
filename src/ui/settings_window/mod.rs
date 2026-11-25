@@ -174,7 +174,8 @@ pub(crate) unsafe fn paint_settings(hwnd: HWND) {
             scroll: settings_tab_scroll(app),
             microphone_in_use: open_microphone_name(),
         };
-        let layout = render_settings_canvas(&mut canvas, &settings, &model_status, &view, &settings_view, capturing, tab);
+        let downloads = downloads_snapshot(app);
+        let layout = render_settings_canvas(&mut canvas, &settings, &model_status, &view, &settings_view, &downloads, capturing, tab);
         canvas.blit_to(hdc);
         // Remember what the list looked like, for clicks and wheel scrolling.
         app.history_content_h.store(layout.content_h, Ordering::SeqCst);
@@ -383,6 +384,7 @@ pub(crate) unsafe fn render_settings_canvas(
     model_status: &str,
     history: &HistoryView,
     settings_view: &SettingsTabView,
+    downloads: &[ModelDownloadState],
     capturing: bool,
     tab: usize,
 ) -> HistoryLayout {
@@ -420,7 +422,7 @@ pub(crate) unsafe fn render_settings_canvas(
 
         match tab {
             TAB_HISTORY => draw_history_shapes(buf, cw, ch, &list),
-            TAB_MODEL => draw_model_shapes(buf, cw, ch, settings),
+            TAB_MODEL => draw_model_shapes(buf, cw, ch, settings, downloads),
             _ => draw_settings_tab_shapes(buf, cw, ch, &rows, settings_view, capturing),
         }
     }
@@ -452,7 +454,7 @@ pub(crate) unsafe fn render_settings_canvas(
 
     match tab {
         TAB_HISTORY => draw_history_text(dc, history, &mut list),
-        TAB_MODEL => draw_model_text(dc, settings, model_status, &rows),
+        TAB_MODEL => draw_model_text(dc, settings, model_status, &rows, downloads),
         _ => draw_settings_tab_text(dc, settings, &rows, settings_view, capturing),
     }
 
