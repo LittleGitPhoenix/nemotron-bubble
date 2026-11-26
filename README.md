@@ -185,6 +185,7 @@ ___
 | Move the bubble | pick a preset under *Settings* tab → *Bubble position* (saved), or drag it (until the next start) |
 | Copy a past dictation | *History* tab → the copy icon in front of the entry |
 | Tray menu (start/stop, show/hide bubble, speech model, language, processing, quit) | right-click the tray icon |
+| Quit | the ✕ that appears on the bubble while the mouse is over it, **or** *Quit* in the tray menu |
 
 ___
 

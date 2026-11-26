@@ -25,6 +25,7 @@ ___
 - The new `--self-test` parameter prints to the console and reports the device and the processing time per chunk.
 - The version is shown in the settings window, the tray menu and the file properties of the executable.
 - An icon for the executable.
+- A close button on the floating bubble. It appears on the bubble's top-right edge while the mouse is over the bubble and quits the app like *Quit* in the tray menu.
 
 ### Changed
 

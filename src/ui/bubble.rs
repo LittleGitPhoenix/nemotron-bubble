@@ -63,10 +63,16 @@ pub(crate) fn toggle_window_visibility() {
 // --- Global shortcut (customizable hotkey) ---------------------------------
 
 pub(crate) fn handle_click(x: i32, y: i32) {
-    let _ = (x, y);
     let Some(app) = APP.get() else {
         return;
     };
+    // The close badge is drawn while the mouse is over the bubble, so a real click
+    // on its spot always sees it.
+    if bubble_close_hit(x, y) {
+        log_info("Quit via the close button of the bubble.");
+        handle_command(IDM_QUIT);
+        return;
+    }
     if settings_snapshot(app).bubble_click_opens_settings {
         toggle_settings_window(SettingsOrigin::Bubble);
     } else {
@@ -233,8 +239,74 @@ pub(crate) unsafe fn render_bubble(hwnd: HWND) {
             wave_enabled,
             mic_missing && !recording,
         );
+        if BUBBLE_HOVER.load(Ordering::SeqCst) {
+            draw_close_badge(buf, WIDTH, HEIGHT, CLOSE_HOVER.load(Ordering::SeqCst));
+        }
     }
     canvas.present_layered(hwnd);
+}
+
+// --- Close badge --------------------------------------------------------------
+
+/// Centre and radius of the close badge (window coordinates). It sits on the
+/// pill's top-right edge and is shown only while the mouse is over the bubble.
+const CLOSE_CX: f32 = (BUBBLE_MARGIN + PILL_W - 12) as f32;
+const CLOSE_CY: f32 = (BUBBLE_MARGIN + 4) as f32;
+const CLOSE_R: f32 = 8.0;
+/// The mouse is over the bubble, and over its close badge.
+static BUBBLE_HOVER: AtomicBool = AtomicBool::new(false);
+static CLOSE_HOVER: AtomicBool = AtomicBool::new(false);
+
+/// True when (x, y) in bubble window coordinates hits the close badge. The hit
+/// area is a little larger than the badge, which is small.
+pub(crate) fn bubble_close_hit(x: i32, y: i32) -> bool {
+    (x as f32 + 0.5 - CLOSE_CX).hypot(y as f32 + 0.5 - CLOSE_CY) <= CLOSE_R + 2.0
+}
+
+/// Round close badge with an ✕, red while the mouse is over it.
+fn draw_close_badge(buf: &mut [u32], cw: i32, ch: i32, hot: bool) {
+    let (cx, cy, r) = (CLOSE_CX, CLOSE_CY, CLOSE_R);
+    let bounds = (cx - r - 2.0, cy - r - 2.0, cx + r + 2.0, cy + r + 2.0);
+    // dark ring that separates the badge from the pill edge
+    fill_sdf(buf, cw, ch, bounds, (18, 20, 25), 0.9, |x, y| (x - cx).hypot(y - cy) - (r + 1.2));
+    let (fill, cross): (Rgb, Rgb) = if hot {
+        ((232, 72, 72), (255, 255, 255))
+    } else {
+        ((70, 77, 91), (214, 219, 228))
+    };
+    fill_sdf(buf, cw, ch, bounds, fill, 1.0, |x, y| (x - cx).hypot(y - cy) - r);
+    let arm = 3.0;
+    fill_sdf(buf, cw, ch, bounds, cross, 1.0, |x, y| {
+        let a = sd_segment(x, y, cx - arm, cy - arm, cx + arm, cy + arm);
+        let b = sd_segment(x, y, cx - arm, cy + arm, cx + arm, cy - arm);
+        a.min(b) - 0.85
+    });
+}
+
+/// WM_MOUSEMOVE on the bubble: show the close badge and highlight it under the
+/// mouse. Asks for WM_MOUSELEAVE so the badge disappears again.
+pub(crate) unsafe fn bubble_mouse_move(hwnd: HWND, x: i32, y: i32) {
+    if !BUBBLE_HOVER.swap(true, Ordering::SeqCst) {
+        let mut track = TRACKMOUSEEVENT {
+            cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+            dwFlags: TME_LEAVE,
+            hwndTrack: hwnd,
+            dwHoverTime: 0,
+        };
+        TrackMouseEvent(&mut track);
+        render_bubble(hwnd);
+    }
+    let hot = bubble_close_hit(x, y);
+    if CLOSE_HOVER.swap(hot, Ordering::SeqCst) != hot {
+        render_bubble(hwnd);
+    }
+}
+
+/// WM_MOUSELEAVE on the bubble: hide the close badge.
+pub(crate) unsafe fn bubble_mouse_leave(hwnd: HWND) {
+    BUBBLE_HOVER.store(false, Ordering::SeqCst);
+    CLOSE_HOVER.store(false, Ordering::SeqCst);
+    render_bubble(hwnd);
 }
 
 /// Draw the bubble (shadow, glassy pill, status dot, waveform) into a premultiplied
