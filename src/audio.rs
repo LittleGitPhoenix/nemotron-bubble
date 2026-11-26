@@ -66,9 +66,11 @@ pub(crate) fn close_audio_capture() {
 }
 
 /// Make sure a working microphone stream is open, on the device the settings
-/// ask for. Returns false (after logging and notifying the user) when no usable
-/// input device is available. Must run on the main/UI thread, which owns the stream.
-pub(crate) fn ensure_audio_capture(app: &Arc<AppState>) -> bool {
+/// ask for. Returns false when no usable input device is available, after
+/// recording the reason in `UiState::mic_error` (shown by the bubble and the tray
+/// icon) and, with `notify`, telling the user in a message box. Must run on the
+/// main/UI thread, which owns the stream.
+pub(crate) fn ensure_audio_capture(app: &Arc<AppState>, notify: bool) -> bool {
     let open = AUDIO_STREAM.with(|slot| slot.borrow().is_some());
     if open && !MIC_FAILED.load(Ordering::SeqCst) {
         if !microphone_choice_changed(app) {
@@ -84,24 +86,48 @@ pub(crate) fn ensure_audio_capture(app: &Arc<AppState>) -> bool {
         Ok((stream, name)) => {
             AUDIO_STREAM.with(|slot| *slot.borrow_mut() = Some(stream));
             OPEN_MICROPHONE.with(|slot| *slot.borrow_mut() = Some(name));
+            if lock_ui(app).mic_error.is_some() {
+                update_ui(app, |ui| ui.mic_error = None);
+            }
             true
         }
         Err(err) => {
             let message = format!("{err:#}");
-            log_error(&format!("Microphone unavailable: {message}"));
-            notify_user(
-                "Nemotron Bubble: no microphone",
-                &format!(
-                    "No usable microphone was found ({message}).\n\n\
-                     Connect or enable a microphone (Windows Settings > System > Sound > Input), \
-                     then press your shortcut again. The app keeps running in the tray.\n\n\
-                     Log file: {}",
-                    log_path().display()
-                ),
-                MB_ICONWARNING,
-            );
+            // The retry timer runs into the same error every few seconds. Log it once.
+            if lock_ui(app).mic_error.as_deref() != Some(message.as_str()) {
+                log_error(&format!("Microphone unavailable: {message}"));
+            }
+            update_ui(app, |ui| ui.mic_error = Some(message.clone()));
+            if notify {
+                notify_user(
+                    "Nemotron Bubble: no microphone",
+                    &format!(
+                        "No usable microphone was found ({message}).\n\n\
+                         Connect or enable a microphone (Windows Settings > System > Sound > Input), \
+                         then press your shortcut again. The app keeps running in the tray.\n\n\
+                         Log file: {}",
+                        log_path().display()
+                    ),
+                    MB_ICONWARNING,
+                );
+            }
             false
         }
+    }
+}
+
+/// Timer callback while no microphone is available: open the stream as soon as
+/// a usable input device is back, so the bubble and the tray icon recover on
+/// their own. Only a cheap device lookup runs while none is there.
+pub(crate) fn retry_audio_capture(app: &Arc<AppState>) {
+    if app.recording.load(Ordering::SeqCst) || lock_ui(app).mic_error.is_none() {
+        return;
+    }
+    let wanted = settings_snapshot(app).microphone;
+    let available = default_input_device_name().is_some()
+        || (!wanted.is_empty() && input_device_names().contains(&wanted));
+    if available {
+        ensure_audio_capture(app, false);
     }
 }
 
@@ -126,7 +152,7 @@ pub(crate) fn select_microphone(app: &Arc<AppState>, name: String) {
     log_info(&format!("Microphone changed to {}", microphone_label(&settings.microphone)));
 
     close_audio_capture();
-    if ensure_audio_capture(app) {
+    if ensure_audio_capture(app, true) {
         let in_use = open_microphone_name().unwrap_or_default();
         update_ui(app, |ui| {
             ui.status = format!("Microphone: {in_use}.");
@@ -167,7 +193,7 @@ fn pick_input_device(app: &Arc<AppState>, host: &cpal::Host) -> Result<cpal::Dev
         log_error(&format!("Microphone '{wanted}' is not connected. Using the Windows default."));
     }
     host.default_input_device()
-        .ok_or_else(|| anyhow!("no default microphone found"))
+        .ok_or_else(|| anyhow!("no microphone is connected or enabled"))
 }
 
 /// Open and start the input stream. Returns it with the name of its device.
@@ -203,6 +229,9 @@ pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<(cpal::Stream, S
         update_ui(&err_app, |ui| {
             ui.status = "Microphone error.".to_string();
             ui.transcript = err.to_string();
+            // Shown by the bubble and the tray icon until retry_audio_capture
+            // has reopened the stream.
+            ui.mic_error = Some(err.to_string());
         });
     };
 

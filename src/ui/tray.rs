@@ -25,7 +25,7 @@ pub(crate) static CURRENT_TRAY_ICON: AtomicIsize = AtomicIsize::new(0);
 pub(crate) unsafe fn add_tray_icon(hwnd: HWND) {
     // Track only the icon we own. If creation fails, fall back to the shared system
     // icon for display but store 0 so it is never passed to DestroyIcon.
-    let icon = make_tray_icon(0.0, false);
+    let icon = make_tray_icon(0.0, false, false);
     let shown = if icon == null_mut() {
         LoadIconW(null_mut(), IDI_APPLICATION)
     } else {
@@ -38,9 +38,31 @@ pub(crate) unsafe fn add_tray_icon(hwnd: HWND) {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = shown;
-    fill_wide_fixed(&mut nid.szTip, &format!("Nemotron Bubble {APP_VERSION}"));
+    fill_wide_fixed(&mut nid.szTip, &tray_tooltip(None));
     Shell_NotifyIconW(NIM_ADD, &mut nid);
     CURRENT_TRAY_ICON.store(icon as isize, Ordering::SeqCst);
+}
+
+/// Tray tooltip text: the version, plus the reason when no microphone is available.
+/// Windows cuts it off after 127 characters.
+fn tray_tooltip(mic_error: Option<&str>) -> String {
+    match mic_error {
+        Some(reason) => format!("Nemotron Bubble {APP_VERSION}\nNo microphone: {reason}"),
+        None => format!("Nemotron Bubble {APP_VERSION}"),
+    }
+}
+
+pub(crate) unsafe fn update_tray_tooltip(hwnd: HWND, mic_error: Option<&str>) {
+    if hwnd == null_mut() {
+        return;
+    }
+    let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = TRAY_ID;
+    nid.uFlags = NIF_TIP;
+    fill_wide_fixed(&mut nid.szTip, &tray_tooltip(mic_error));
+    Shell_NotifyIconW(NIM_MODIFY, &mut nid);
 }
 
 pub(crate) unsafe fn remove_tray_icon(hwnd: HWND) {
@@ -146,9 +168,10 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
 }
 
 /// Build a 32x32 tray icon. While recording the equalizer bars scale with `level`
-/// and a small red dot appears; idle shows a static dim glyph. The caller owns the
-/// returned HICON and must DestroyIcon it when replaced.
-pub(crate) unsafe fn make_tray_icon(level: f32, recording: bool) -> HICON {
+/// and a small red dot appears; idle shows a static dim glyph, crossed out in amber
+/// with `mic_missing`. The caller owns the returned HICON and must DestroyIcon it
+/// when replaced.
+pub(crate) unsafe fn make_tray_icon(level: f32, recording: bool, mic_missing: bool) -> HICON {
     const SIZE: i32 = 32;
     let mut pixels = vec![0u32; (SIZE * SIZE) as usize];
     let center = (SIZE as f32 - 1.0) / 2.0;
@@ -199,6 +222,35 @@ pub(crate) unsafe fn make_tray_icon(level: f32, recording: bool) -> HICON {
         }
     }
 
+    if mic_missing && !recording {
+        // Anti-aliased slash with a gap in the background colour. All its pixels
+        // lie inside the opaque circle, so only the colour channels are mixed.
+        let mix = |from: u32, to: u32, t: f32| -> u32 {
+            let channel = |shift: u32| {
+                let a = ((from >> shift) & 0xFF) as f32;
+                let b = ((to >> shift) & 0xFF) as f32;
+                ((a + (b - a) * t).round() as u32) << shift
+            };
+            0xFF00_0000 | channel(16) | channel(8) | channel(0)
+        };
+        let (r, g, b) = MIC_MISSING_RGB;
+        let amber = 0xFF00_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32;
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let d = sd_segment(x as f32 + 0.5, y as f32 + 0.5, 8.0, 8.0, 24.0, 24.0);
+                let idx = (y * SIZE + x) as usize;
+                let gap = (4.0 - d).clamp(0.0, 1.0);
+                if gap > 0.0 {
+                    pixels[idx] = mix(pixels[idx], bg, gap);
+                }
+                let line = (2.3 - d).clamp(0.0, 1.0);
+                if line > 0.0 {
+                    pixels[idx] = mix(pixels[idx], amber, line);
+                }
+            }
+        }
+    }
+
     let color = CreateBitmap(SIZE, SIZE, 1, 32, pixels.as_ptr() as _);
     let mask_bits = vec![0u8; ((SIZE * SIZE) / 8) as usize];
     let mask = CreateBitmap(SIZE, SIZE, 1, 1, mask_bits.as_ptr() as _);
@@ -239,12 +291,18 @@ pub(crate) unsafe fn update_tray_icon(hwnd: HWND, icon: HICON) {
     }
 }
 
+/// The idle tray icon, crossed out while no microphone is available.
+pub(crate) unsafe fn make_idle_tray_icon(app: &Arc<AppState>) -> HICON {
+    let mic_missing = lock_ui(app).mic_error.is_some();
+    make_tray_icon(0.0, false, mic_missing)
+}
+
 /// Reset the tray icon to its idle glyph.
 pub(crate) fn refresh_tray_idle(app: &Arc<AppState>) {
     unsafe {
         let hwnd = hwnd_from_app(app);
         if hwnd != null_mut() {
-            update_tray_icon(hwnd, make_tray_icon(0.0, false));
+            update_tray_icon(hwnd, make_idle_tray_icon(app));
         }
     }
 }

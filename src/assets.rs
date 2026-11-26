@@ -39,7 +39,7 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
     {
         let wave = frame_wave(9.0, 48.0);
         let mut buf = vec![0u32; (WIDTH * HEIGHT) as usize];
-        paint_bubble_into(&mut buf, WIDTH, HEIGHT, 0.0, 0.0, &wave, true, true);
+        paint_bubble_into(&mut buf, WIDTH, HEIGHT, 0.0, 0.0, &wave, true, true, false);
         let (big, bw, bh) = upscale_premul(&buf, WIDTH as usize, HEIGHT as usize, 2);
         let rgba: Vec<u8> = big.iter().flat_map(|&p| unpremultiply(p)).collect();
         write_png(&dir.join("bubble.png"), bw as u32, bh as u32, &rgba)?;
@@ -60,7 +60,7 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
         for t in 0..FRAMES {
             let wave = frame_wave(t as f32, FRAMES as f32);
             let mut buf = vec![0u32; (WIDTH * HEIGHT) as usize];
-            paint_bubble_into(&mut buf, WIDTH, HEIGHT, 0.0, 0.0, &wave, true, true);
+            paint_bubble_into(&mut buf, WIDTH, HEIGHT, 0.0, 0.0, &wave, true, true, false);
             let (big, _, _) = upscale_premul(&buf, WIDTH as usize, HEIGHT as usize, scale);
             let mut frame = bg.clone();
             composite_over(&mut frame, HERO_W, HERO_H, &big, bw, bh, ox, oy);

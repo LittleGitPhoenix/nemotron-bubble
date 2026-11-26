@@ -322,7 +322,7 @@ pub(crate) fn toggle_recording() {
 }
 
 pub(crate) fn start_recording(app: &Arc<AppState>) {
-    if !ensure_audio_capture(app) {
+    if !ensure_audio_capture(app, true) {
         update_ui(app, |ui| {
             ui.recording = false;
             ui.status = "No microphone available. Connect one and try again.".to_string();
