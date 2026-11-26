@@ -205,10 +205,15 @@ pub(crate) unsafe fn render_bubble(hwnd: HWND) {
     let Some(app) = APP.get() else {
         return;
     };
-    let (waveform, recording, wave_enabled) = {
+    let (waveform, recording, wave_enabled, mic_missing) = {
         let ui = lock_ui(app);
         let settings = settings_snapshot(app);
-        (ui.waveform.clone(), ui.recording, settings.waveform_enabled)
+        (
+            ui.waveform.clone(),
+            ui.recording,
+            settings.waveform_enabled,
+            ui.mic_error.is_some(),
+        )
     };
 
     let Some(mut canvas) = Canvas::new(WIDTH, HEIGHT) else {
@@ -217,14 +222,25 @@ pub(crate) unsafe fn render_bubble(hwnd: HWND) {
     canvas.clear_transparent();
     {
         let buf = canvas.pixels();
-        paint_bubble_into(buf, WIDTH, HEIGHT, 0.0, 0.0, &waveform, recording, wave_enabled);
+        paint_bubble_into(
+            buf,
+            WIDTH,
+            HEIGHT,
+            0.0,
+            0.0,
+            &waveform,
+            recording,
+            wave_enabled,
+            mic_missing && !recording,
+        );
     }
     canvas.present_layered(hwnd);
 }
 
 /// Draw the bubble (shadow, glassy pill, status dot, waveform) into a premultiplied
 /// pixel buffer. The bubble's margin box is placed at (ox, oy) so it can be composited
-/// anywhere — used both by the live layered window and the asset exporter.
+/// anywhere — used both by the live layered window and the asset exporter. With
+/// `mic_missing` the dot turns amber and a crossed-out microphone replaces the waveform.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_bubble_into(
     buf: &mut [u32],
@@ -235,6 +251,7 @@ pub(crate) fn paint_bubble_into(
     waveform: &[f32],
     recording: bool,
     wave_enabled: bool,
+    mic_missing: bool,
 ) {
     let px = ox + BUBBLE_MARGIN as f32;
     let py = oy + BUBBLE_MARGIN as f32;
@@ -269,6 +286,8 @@ pub(crate) fn paint_bubble_into(
     let dot_cy = py + ph / 2.0;
     let (dot_col, dot_a): (Rgb, f32) = if recording {
         ((255, 92, 92), 0.95)
+    } else if mic_missing {
+        (MIC_MISSING_RGB, 0.95)
     } else {
         ((104, 112, 126), 0.7)
     };
@@ -286,9 +305,157 @@ pub(crate) fn paint_bubble_into(
         dot_a,
     );
 
-    // waveform fills the remainder of the pill
+    // waveform fills the remainder of the pill (the same area draw_wave_bars uses)
+    if mic_missing {
+        let area_left = dot_cx + dot_r + 6.0;
+        let area_right = px + pw - 12.0;
+        draw_mic_off(buf, cw, ch, (area_left + area_right) / 2.0, py + ph / 2.0);
+        return;
+    }
     let active = recording && wave_enabled;
     draw_wave_bars(buf, cw, ch, waveform, active, dot_cx + dot_r, px + pw, py, ph);
+}
+
+/// Amber of the "no microphone" state, used by the bubble and the tray icon.
+pub(crate) const MIC_MISSING_RGB: Rgb = (255, 179, 71);
+
+/// Crossed-out microphone glyph, about 22 px tall, centred at (cx, cy).
+fn draw_mic_off(buf: &mut [u32], cw: i32, ch: i32, cx: f32, cy: f32) {
+    let color = MIC_MISSING_RGB;
+    let alpha = 0.95;
+    // capsule
+    fill_round_rect(buf, cw, ch, cx - 4.0, cy - 11.0, 8.0, 13.0, 4.0, color, color, alpha);
+    // holder: the lower half of a ring around the capsule
+    let (ring_cy, ring_r) = (cy - 2.0, 7.5);
+    fill_sdf(buf, cw, ch, (cx - 9.0, ring_cy, cx + 9.0, ring_cy + 9.0), color, alpha, |x, y| {
+        let ring = ((x - cx).hypot(y - ring_cy) - ring_r).abs() - 0.9;
+        ring.max(ring_cy - y)
+    });
+    // stand and foot
+    fill_sdf(buf, cw, ch, (cx - 1.0, cy + 5.0, cx + 1.0, cy + 10.0), color, alpha, |x, y| {
+        sd_segment(x, y, cx, cy + 6.0, cx, cy + 9.0) - 0.9
+    });
+    fill_sdf(buf, cw, ch, (cx - 5.0, cy + 8.0, cx + 5.0, cy + 11.0), color, alpha, |x, y| {
+        sd_segment(x, y, cx - 3.5, cy + 9.5, cx + 3.5, cy + 9.5) - 0.9
+    });
+    // slash with a gap in the pill colour, so it reads as crossed out
+    let (ax, ay, bx, by) = (cx - 8.0, cy - 11.0, cx + 8.0, cy + 10.0);
+    let slash_box = (ax - 4.0, ay - 4.0, bx + 4.0, by + 4.0);
+    fill_sdf(buf, cw, ch, slash_box, (36, 40, 49), 1.0, |x, y| {
+        sd_segment(x, y, ax, ay, bx, by) - 2.6
+    });
+    fill_sdf(buf, cw, ch, slash_box, color, alpha, |x, y| {
+        sd_segment(x, y, ax, ay, bx, by) - 1.1
+    });
+}
+
+// --- "No microphone" indicator ----------------------------------------------
+
+/// Retry timer that reopens the microphone once one is back.
+pub(crate) const MIC_RETRY_TIMER_ID: usize = 79;
+pub(crate) const MIC_RETRY_INTERVAL_MS: u32 = 3000;
+/// Tooltip control of the floating bubble (0 when it could not be created).
+pub(crate) static BUBBLE_TOOLTIP: AtomicIsize = AtomicIsize::new(0);
+
+thread_local! {
+    // The mic_error the tray icon, the tooltips and the retry timer last showed.
+    static SHOWN_MIC_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Create the bubble's tooltip. It stays inactive while a microphone is available.
+pub(crate) unsafe fn create_bubble_tooltip(bubble: HWND) {
+    let controls = INITCOMMONCONTROLSEX {
+        dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+        dwICC: ICC_WIN95_CLASSES,
+    };
+    InitCommonControlsEx(&controls);
+    let tooltip = CreateWindowExW(
+        WS_EX_TOPMOST,
+        TOOLTIPS_CLASSW,
+        null(),
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        bubble,
+        null_mut(),
+        GetModuleHandleW(null()),
+        null(),
+    );
+    if tooltip == null_mut() {
+        log_error("Could not create the tooltip of the bubble.");
+        return;
+    }
+    let mut text = wide_null("");
+    let info = bubble_tool_info(bubble, text.as_mut_ptr());
+    SendMessageW(tooltip, TTM_ADDTOOLW, 0, &info as *const _ as LPARAM);
+    SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0, 360);
+    SendMessageW(tooltip, TTM_ACTIVATE, 0, 0);
+    BUBBLE_TOOLTIP.store(tooltip as isize, Ordering::SeqCst);
+}
+
+/// The bubble's only tool: the whole window, subclassed so the tooltip sees the mouse.
+unsafe fn bubble_tool_info(bubble: HWND, text: *mut u16) -> TTTOOLINFOW {
+    let mut info: TTTOOLINFOW = std::mem::zeroed();
+    // Without lpReserved (the "V2" size): accepted by comctl32 5 and 6 alike. The
+    // exe has no common controls 6 manifest, and version 5 rejects the full size.
+    info.cbSize = (std::mem::size_of::<TTTOOLINFOW>() - std::mem::size_of::<*mut c_void>()) as u32;
+    info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    info.hwnd = bubble;
+    info.uId = bubble as usize;
+    info.lpszText = text;
+    info
+}
+
+/// Bring the tray icon, both tooltips and the retry timer in line with
+/// `UiState::mic_error`. Runs on the UI thread after every UI update.
+pub(crate) unsafe fn sync_mic_indicator(hwnd: HWND) {
+    let Some(app) = APP.get() else {
+        return;
+    };
+    let (error, recording) = {
+        let ui = lock_ui(app);
+        (ui.mic_error.clone(), ui.recording)
+    };
+    let changed = SHOWN_MIC_ERROR.with(|shown| {
+        let mut shown = shown.borrow_mut();
+        if *shown == error {
+            false
+        } else {
+            *shown = error.clone();
+            true
+        }
+    });
+    if !changed {
+        return;
+    }
+
+    update_tray_tooltip(hwnd, error.as_deref());
+    if !recording {
+        update_tray_icon(hwnd, make_tray_icon(0.0, false, error.is_some()));
+    }
+
+    let tooltip = BUBBLE_TOOLTIP.load(Ordering::SeqCst) as HWND;
+    if tooltip != null_mut() {
+        let mut text = wide_null(&match &error {
+            Some(reason) => format!(
+                "No microphone available\r\nReason: {reason}\r\n\r\n\
+                 Connect or enable a microphone (Windows Settings > System > Sound > Input). \
+                 It is picked up automatically."
+            ),
+            None => String::new(),
+        });
+        let info = bubble_tool_info(hwnd, text.as_mut_ptr());
+        SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, &info as *const _ as LPARAM);
+        SendMessageW(tooltip, TTM_ACTIVATE, usize::from(error.is_some()), 0);
+    }
+
+    if error.is_some() {
+        SetTimer(hwnd, MIC_RETRY_TIMER_ID, MIC_RETRY_INTERVAL_MS, None);
+    } else {
+        KillTimer(hwnd, MIC_RETRY_TIMER_ID);
+    }
 }
 
 /// Mirrored, rounded, anti-aliased waveform bars centred in the pill.
@@ -375,12 +542,12 @@ pub(crate) unsafe fn on_anim_tick(hwnd: HWND) {
     if recording && settings.tray_waveform_enabled {
         if tick % 3 == 0 {
             let level = lock_ui(app).current_level;
-            update_tray_icon(hwnd, make_tray_icon(level, true));
+            update_tray_icon(hwnd, make_tray_icon(level, true, false));
         }
         TRAY_ANIMATING.store(true, Ordering::Relaxed);
     } else if TRAY_ANIMATING.swap(false, Ordering::Relaxed) {
         // Recording just ended (or animation was switched off): settle to idle.
-        update_tray_icon(hwnd, make_tray_icon(0.0, false));
+        update_tray_icon(hwnd, make_idle_tray_icon(app));
     }
 }
 

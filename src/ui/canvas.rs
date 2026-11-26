@@ -161,6 +161,45 @@ pub(crate) fn blend_px(buf: &mut [u32], idx: usize, r: f32, g: f32, b: f32, a: f
     buf[idx] = ((oa as u32) << 24) | ((or as u32) << 16) | ((og as u32) << 8) | (ob as u32);
 }
 
+/// Distance from a point to the line segment (ax, ay)-(bx, by). Subtract a
+/// radius to get a capsule (a line with round caps).
+#[inline]
+pub(crate) fn sd_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    let (pax, pay) = (px - ax, py - ay);
+    let (bax, bay) = (bx - ax, by - ay);
+    let len2 = (bax * bax + bay * bay).max(f32::EPSILON);
+    let h = ((pax * bax + pay * bay) / len2).clamp(0.0, 1.0);
+    (pax - bax * h).hypot(pay - bay * h)
+}
+
+/// Anti-aliased fill of any shape given by a signed distance function (negative
+/// inside), evaluated for the pixels of the box (x0, y0)-(x1, y1).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_sdf<F: Fn(f32, f32) -> f32>(
+    buf: &mut [u32],
+    cw: i32,
+    ch: i32,
+    (x0, y0, x1, y1): (f32, f32, f32, f32),
+    color: Rgb,
+    alpha: f32,
+    sdf: F,
+) {
+    let px0 = (x0.floor() as i32 - 1).max(0);
+    let py0 = (y0.floor() as i32 - 1).max(0);
+    let px1 = (x1.ceil() as i32 + 1).min(cw);
+    let py1 = (y1.ceil() as i32 + 1).min(ch);
+    for py in py0..py1 {
+        let fy = py as f32 + 0.5;
+        let row = (py * cw) as usize;
+        for px in px0..px1 {
+            let cov = (0.5 - sdf(px as f32 + 0.5, fy)).clamp(0.0, 1.0);
+            if cov > 0.0 {
+                blend_px(buf, row + px as usize, color.0 as f32, color.1 as f32, color.2 as f32, cov * alpha);
+            }
+        }
+    }
+}
+
 /// Signed distance from a point to a rounded rectangle (negative inside).
 #[inline]
 pub(crate) fn sd_round_rect(px: f32, py: f32, cx: f32, cy: f32, hx: f32, hy: f32, r: f32) -> f32 {

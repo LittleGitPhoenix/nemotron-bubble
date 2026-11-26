@@ -81,6 +81,11 @@ use windows_sys::Win32::System::Memory::{
     GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
 };
 use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
+use windows_sys::Win32::UI::Controls::{
+    ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, TOOLTIPS_CLASSW, TTF_IDISHWND,
+    TTF_SUBCLASS, TTM_ACTIVATE, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTM_UPDATETIPTEXTW,
+    TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyNameTextW, GetKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
@@ -100,7 +105,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     IsWindow, IsWindowVisible, KillTimer, LoadCursorW, LoadIconW, LWA_ALPHA, MB_ICONERROR,
     MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MESSAGEBOX_STYLE, MF_CHECKED, MF_GRAYED,
     HMENU, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW,
-    PostMessageW, PostQuitMessage, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW,
+    PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW,
     SW_SHOWNA, SWP_NOACTIVATE, SWP_NOSIZE, SetForegroundWindow,
     SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, TPM_RIGHTBUTTON,
     TrackPopupMenu, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WM_APP, WM_COMMAND, WM_CREATE,
@@ -124,6 +129,9 @@ pub(crate) struct UiState {
     pub(crate) model_dir: String,
     /// Short model state for the settings window, e.g. "Loaded: Multilingual".
     pub(crate) model_status: String,
+    /// Why no microphone could be opened, None while one is available. The bubble
+    /// and the tray icon show it and give the reason in their tooltips.
+    pub(crate) mic_error: Option<String>,
     pub(crate) waveform: Vec<f32>,
     pub(crate) current_level: f32,
     pub(crate) last_voice: Instant,
@@ -257,6 +265,7 @@ pub(crate) fn run_app() -> Result<()> {
             transcript: "Tap Ctrl+Space to dictate.".to_string(),
             model_dir: String::new(),
             model_status: "Not loaded yet.".to_string(),
+            mic_error: None,
             waveform: vec![0.0; WAVE_BARS],
             current_level: 0.0,
             last_voice: Instant::now(),
@@ -270,9 +279,10 @@ pub(crate) fn run_app() -> Result<()> {
         move || run_engine(engine_rx, app)
     });
 
-    // A missing/disabled microphone is not fatal: tell the user, keep running in
-    // the tray, and retry opening the device the next time dictation starts.
-    if !ensure_audio_capture(&app) {
+    // A missing/disabled microphone is not fatal and shows no message box here:
+    // the bubble and the tray icon show it (with the reason on hover), and the
+    // device is opened as soon as it is back (see retry_audio_capture).
+    if !ensure_audio_capture(&app, false) {
         update_ui(&app, |ui| {
             ui.status = "No microphone available. Connect one, then start dictation.".to_string();
         });

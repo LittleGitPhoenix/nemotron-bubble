@@ -26,7 +26,7 @@ This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike
 | **Model downloads in the app** | Download, resume and update both models on the *Model* tab instead of with a PowerShell script. Every file is verified with SHA-256, and the date of the model version is shown. |
 | **GPU support** | Run the model on the GPU via DirectML, which works with any DirectX 12 graphics adapter, or stay on the CPU. *Auto* tries the GPU first. |
 | **Language selection** | Tell the multilingual model which language you speak instead of letting it guess. 15 languages are offered, and NVIDIA rates this as more accurate than auto-detection. |
-| **Clear error feedback** | A missing microphone or a model that fails to load now shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
+| **Clear error feedback** | A missing microphone is shown by the bubble and the tray icon, and a model that fails to load shows a message, instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
 | **Portable** | Settings, history and logs are stored next to the exe instead of in `%APPDATA%`. |
 | **App icon and version** | The exe has its own icon, and the version is shown in the settings window, the tray menu and the file properties. |
 
@@ -169,7 +169,7 @@ ___
 | --- | --- |
 | **Log file** | `log\nemotron-bubble.log` (next to the exe) records startup, microphone, model loading (folder, file sizes, mode, load time) and every error. The same lines go to `OutputDebugString`, so [DebugView](https://learn.microsoft.com/sysinternals/downloads/debugview) shows them live (filter on `NemotronBubble`). |
 | **Self-test** | Run `nemotron-bubble.exe --self-test` from a terminal. It loads the model, runs a few chunks, and prints the device, the processing time per chunk, or the full error. |
-| **No microphone** | The app shows a warning and keeps running in the tray. It reopens the microphone the next time you start dictation. |
+| **No microphone** | The app keeps running. The bubble shows a crossed-out microphone and the tray icon is crossed out, and both tell the reason on hover. The microphone is picked up automatically once it is connected. Starting dictation without one shows a warning. |
 | **Model fails to load** | A dialog shows the reason. An interrupted download is the usual cause: `encoder.onnx.data` must be about 2.5 GB. On the *Model* tab, click **Check for updates**. A damaged file shows up as *Update available*, and **Update** downloads it again. |
 
 ___

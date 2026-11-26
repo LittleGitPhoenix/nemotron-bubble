@@ -20,7 +20,8 @@ ___
 - Microphone selection on the *Settings* tab. *Windows default* follows the Windows default input device, and a change there is picked up at the next dictation start without restarting the app. A selected device that is not connected falls back to the Windows default until it is back.
 - Model downloads on the *Model* tab, replacing the PowerShell download script. Downloads can be cancelled and resumed, and every file is verified with the SHA-256 published by Hugging Face. Each model shows the date of its upstream version, and *Check for updates* compares the installed files with Hugging Face on request. An update only downloads the files that changed and keeps the previous version in a backup folder such as `models\nemotron_2026-10-22`.
 - A log file `log\nemotron-bubble.log` with startup, microphone, model loading and all errors. The same lines go to `OutputDebugString` for DebugView.
-- Messages for a missing microphone and for a model that fails to load.
+- A missing microphone is shown by the bubble (amber dot and a crossed-out microphone) and the tray icon (crossed out), and both give the reason in their tooltip. There is no message box at startup. The app checks every 3 seconds whether a microphone is back and picks it up on its own. Starting dictation without a microphone still shows a message.
+- A message for a model that fails to load.
 - The new `--self-test` parameter prints to the console and reports the device and the processing time per chunk.
 - The version is shown in the settings window, the tray menu and the file properties of the executable.
 - An icon for the executable.

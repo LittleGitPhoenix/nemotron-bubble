@@ -54,6 +54,9 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
     place_window(hwnd);
     render_bubble(hwnd);
     add_tray_icon(hwnd);
+    create_bubble_tooltip(hwnd);
+    // A microphone missing at startup was recorded before this window existed.
+    sync_mic_indicator(hwnd);
 
     let settings_title = wide_null("Nemotron Bubble Settings");
     let settings_hwnd = CreateWindowExW(
@@ -191,6 +194,10 @@ pub(crate) unsafe extern "system" fn wnd_proc(
         WM_TIMER => {
             if wparam == ANIM_TIMER_ID {
                 on_anim_tick(hwnd);
+            } else if wparam == MIC_RETRY_TIMER_ID {
+                if let Some(app) = APP.get() {
+                    retry_audio_capture(app);
+                }
             } else if wparam == COPY_FLASH_TIMER_ID {
                 // the "copied" checkmark has been shown long enough
                 KillTimer(hwnd, COPY_FLASH_TIMER_ID);
@@ -221,6 +228,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
                 InvalidateRect(hwnd, null(), 0);
             } else {
                 render_bubble(hwnd);
+                sync_mic_indicator(hwnd);
             }
             0
         }
@@ -229,6 +237,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
                 if hwnd == hwnd_from_app(app) {
                     let _ = app.engine_tx.send(EngineCommand::Shutdown);
                     KillTimer(hwnd, ANIM_TIMER_ID);
+                    KillTimer(hwnd, MIC_RETRY_TIMER_ID);
                     UnregisterHotKey(hwnd, HOTKEY_ID);
                     remove_tray_icon(hwnd);
                     PostQuitMessage(0);
