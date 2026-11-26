@@ -447,22 +447,24 @@ pub(crate) fn start_model_download(app: &Arc<AppState>, choice: ModelChoice) {
     thread::spawn(move || {
         match download_model(&app, index, choice) {
             Ok(Some(backup)) => {
-                log_info(&format!("{} model downloaded", choice.label()));
-                set_status(
-                    &app,
-                    match backup {
-                        Some(backup) => format!(
-                            "The {} model is updated. The previous version is kept in {}.",
+                match backup {
+                    Some(backup) => {
+                        log_info(&format!(
+                            "{} model updated, the previous version is kept in {}",
                             choice.label(),
                             backup.display()
-                        ),
-                        None => format!("The {} model is downloaded.", choice.label()),
-                    },
-                );
+                        ));
+                        set_status(&app, format!("The {} model is updated. Backup kept.", choice.label()));
+                    }
+                    None => {
+                        log_info(&format!("{} model downloaded", choice.label()));
+                        set_status(&app, format!("The {} model is downloaded.", choice.label()));
+                    }
+                }
             }
             Ok(None) => {
                 log_info(&format!("{} model download cancelled", choice.label()));
-                set_status(&app, "Download cancelled. Resume continues where it stopped.".to_string());
+                set_status(&app, "Download cancelled. Resume continues later.".to_string());
             }
             Err(err) => {
                 log_error(&format!("{} model download failed: {err:#}", choice.label()));

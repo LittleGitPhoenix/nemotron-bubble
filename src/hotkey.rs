@@ -72,6 +72,11 @@ pub(crate) fn hotkey_label(mods: u32, vk: u32) -> String {
     parts.join(" + ")
 }
 
+/// The status text while the app waits for a dictation, naming the current shortcut.
+pub(crate) fn ready_status(settings: &AppSettings) -> String {
+    format!("Ready. Press {} to start.", hotkey_label(settings.hotkey_mods, settings.hotkey_vk))
+}
+
 /// Enter capture mode: free the current hotkey so the next chord arrives as
 /// WM_KEYDOWN, and pull keyboard focus to the application window.
 pub(crate) fn start_hotkey_capture(app: &Arc<AppState>) {

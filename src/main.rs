@@ -124,9 +124,8 @@ pub(crate) static APP: OnceCell<Arc<AppState>> = OnceCell::new();
 pub(crate) struct UiState {
     pub(crate) recording: bool,
     pub(crate) visible: bool,
+    /// The latest status message, shown under the title of the application window.
     pub(crate) status: String,
-    pub(crate) transcript: String,
-    pub(crate) model_dir: String,
     /// Short model state for the application window, e.g. "Loaded: Multilingual".
     pub(crate) model_status: String,
     /// Why no microphone could be opened, None while one is available. The bubble
@@ -237,6 +236,7 @@ pub(crate) fn run_app() -> Result<()> {
     apply_startup_setting(settings.start_with_windows);
     ensure_sound_assets();
     let history = load_history(settings.history_limit);
+    let initial_status = ready_status(&settings);
 
     let (engine_tx, engine_rx) = bounded::<EngineCommand>(256);
     let app = Arc::new(AppState {
@@ -261,9 +261,7 @@ pub(crate) fn run_app() -> Result<()> {
         ui: Mutex::new(UiState {
             recording: false,
             visible: true,
-            status: "Ready. Press Ctrl+Space to start.".to_string(),
-            transcript: "Tap Ctrl+Space to dictate.".to_string(),
-            model_dir: String::new(),
+            status: initial_status,
             model_status: "Not loaded yet.".to_string(),
             mic_error: None,
             waveform: vec![0.0; WAVE_BARS],
@@ -284,7 +282,7 @@ pub(crate) fn run_app() -> Result<()> {
     // device is opened as soon as it is back (see retry_audio_capture).
     if !ensure_audio_capture(&app, false) {
         update_ui(&app, |ui| {
-            ui.status = "No microphone available. Connect one, then start dictation.".to_string();
+            ui.status = "No microphone found. Connect one to dictate.".to_string();
         });
     }
     refresh_local_model_state(&app);

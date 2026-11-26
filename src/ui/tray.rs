@@ -6,7 +6,6 @@ pub(crate) const TRAY_ID: u32 = 1;
 pub(crate) const WM_TRAYICON: u32 = WM_USER + 1;
 pub(crate) const IDM_START_STOP: usize = 1001;
 pub(crate) const IDM_SHOW_HIDE: usize = 1002;
-pub(crate) const IDM_CLEAR: usize = 1003;
 pub(crate) const IDM_QUIT: usize = 1004;
 // Tray "Speech model" submenu: one id per ModelChoice, in ModelChoice::ALL order.
 pub(crate) const IDM_MODEL_BASE: usize = 1100;
@@ -90,7 +89,6 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
 
     let start_text = wide_null(if recording { "Stop" } else { "Start" });
     let show_text = wide_null("Show / Hide Bubble");
-    let clear_text = wide_null("Clear");
     let quit_text = wide_null("Quit");
     let model_text = wide_null("Speech model");
     let version_text = wide_null(&format!("Nemotron Bubble {APP_VERSION}"));
@@ -118,7 +116,6 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
 
     AppendMenuW(menu, MF_STRING, IDM_START_STOP, start_text.as_ptr());
     AppendMenuW(menu, MF_STRING, IDM_SHOW_HIDE, show_text.as_ptr());
-    AppendMenuW(menu, MF_STRING, IDM_CLEAR, clear_text.as_ptr());
     if model_menu != null_mut() {
         // DestroyMenu(menu) below also destroys this attached submenu.
         AppendMenuW(menu, MF_POPUP, model_menu as usize, model_text.as_ptr());

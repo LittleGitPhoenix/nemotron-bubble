@@ -89,7 +89,7 @@ pub(crate) fn setting_rows(settings: &AppSettings) -> Vec<SettingRow> {
         SettingRow {
             id: SETTINGS_TOGGLE_LIVE_TYPE,
             title: "Type live into cursor",
-            detail: "As you speak. Text fields only - off is safer.",
+            detail: "As you speak. Text fields only.",
             enabled: settings.live_type_into_cursor,
         },
         SettingRow {
@@ -161,7 +161,10 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
         return;
     }
     let capturing = app.capturing_hotkey.load(Ordering::SeqCst);
-    let model_status = lock_ui(app).model_status.clone();
+    let (status, model_status) = {
+        let ui = lock_ui(app);
+        (ui.status.clone(), ui.model_status.clone())
+    };
     if let Some(mut canvas) = Canvas::new(WINDOW_WIDTH, WINDOW_HEIGHT) {
         let tab = app.settings_tab.load(Ordering::SeqCst);
         let items = history_snapshot(app);
@@ -175,7 +178,17 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
             microphone_in_use: open_microphone_name(),
         };
         let downloads = downloads_snapshot(app);
-        let layout = render_application_window(&mut canvas, &settings, &model_status, &view, &settings_view, &downloads, capturing, tab);
+        let layout = render_application_window(
+            &mut canvas,
+            &settings,
+            &status,
+            &model_status,
+            &view,
+            &settings_view,
+            &downloads,
+            capturing,
+            tab,
+        );
         canvas.blit_to(hdc);
         // Remember what the list looked like, for clicks and wheel scrolling.
         app.history_content_h.store(layout.content_h, Ordering::SeqCst);
@@ -375,12 +388,13 @@ pub(crate) fn handle_application_window_click(x: i32, y: i32) {
 }
 
 /// Render the entire application window into a canvas: the frame (header, tab bar,
-/// card, version footer) and the content of the active `tab`. Returns the layout
-/// of the History list (copy-icon hit areas, content height), which is empty for
-/// the other tabs.
+/// card, version footer) and the content of the active `tab`. `status` is the latest
+/// status message, shown under the title. Returns the layout of the History list
+/// (copy-icon hit areas, content height), which is empty for the other tabs.
 pub(crate) unsafe fn render_application_window(
     canvas: &mut Canvas,
     settings: &AppSettings,
+    status: &str,
     model_status: &str,
     history: &HistoryView,
     settings_view: &SettingsTabView,
@@ -434,6 +448,20 @@ pub(crate) unsafe fn render_application_window(
     SelectObject(dc, title_font() as _);
     SetTextColor(dc, rgb(237, 241, 247));
     text_left(dc, "Nemotron Bubble", 42, 22, cw - 110, 34);
+
+    // Status line between the title and the tab bar, cut off with "..." when too long.
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(140, 150, 164));
+    text_left_ellipsis(
+        dc,
+        status,
+        RectI {
+            left: 42,
+            top: 57,
+            right: cw - 34,
+            bottom: TAB_BAR_TOP - 2,
+        },
+    );
 
     // close: the ChromeClose glyph of the Windows icon font, like a title bar's X
     SelectObject(dc, icon_font() as _);

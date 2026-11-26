@@ -89,7 +89,7 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
             snapshot.hotkey_mods, snapshot.hotkey_vk
         ));
         update_ui(&app, |ui| {
-            ui.status = "Shortcut unavailable — choose another on the Settings tab.".to_string();
+            ui.status = "The shortcut is taken by another app. Choose another.".to_string();
         });
     }
 
@@ -259,20 +259,10 @@ pub(crate) unsafe extern "system" fn wnd_proc(
     }
 }
 
-pub(crate) fn clear_transcript() {
-    if let Some(app) = APP.get() {
-        update_ui(app, |ui| {
-            ui.transcript.clear();
-            ui.status = "Cleared. Press Ctrl+Space to start.".to_string();
-        });
-    }
-}
-
 pub(crate) fn handle_command(command: usize) {
     match command {
         IDM_START_STOP => toggle_recording(),
         IDM_SHOW_HIDE => toggle_window_visibility(),
-        IDM_CLEAR => clear_transcript(),
         id if (IDM_MODEL_BASE..IDM_MODEL_BASE + ModelChoice::ALL.len()).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_model(app, ModelChoice::ALL[id - IDM_MODEL_BASE]);

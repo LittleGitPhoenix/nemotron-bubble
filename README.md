@@ -19,7 +19,7 @@ ___
 | --- | --- |
 | **Push-to-talk** | One shortcut starts and stops dictation from any app. |
 | **Customizable shortcut** | Click *Global shortcut* on the *Settings* tab and press any combo (Ctrl / Alt / Shift + key). The default is `Ctrl+Space`. |
-| **Safe insertion by default** | On stop the transcript is pasted once (clipboard and a single Ctrl+V), so it never trips app shortcuts. *Type live into cursor* is an opt-in for real text editors. |
+| **Types as you speak** | The words appear at the cursor while you speak. The clipboard stays untouched. |
 | **Auto-stops on silence** | A forgotten recording does not run forever. It stops after 15 s of quiet. |
 | **Private and offline** | The Nemotron ONNX model runs locally. No internet, no accounts, no telemetry. |
 | **English or multilingual** | Pick the model. For the multilingual one, pick the spoken language or let the model detect it. |
@@ -27,7 +27,7 @@ ___
 | **Live waveform bubble** | A smooth, anti-aliased floating mic meter in one of six preset screen positions. It can also be dragged anywhere. |
 | **Tray mode** | Hide the bubble and watch the waveform pulse right in the taskbar tray instead. |
 | **Recent dictations** | A scrollable history. The icon next to each entry copies it, and each entry shows how fast it was processed. |
-| **One clean clipboard copy on stop** | With optional auto-paste. |
+| **Copy or paste on stop** | For apps where keystrokes trigger shortcuts, turn off live typing and let the transcript be copied to the clipboard or pasted once when the dictation stops. |
 | **Portable** | Settings, history and logs live next to the exe. |
 | **Everything toggleable** | Start with Windows, soft sound cues, model preloading and more. |
 
@@ -86,7 +86,7 @@ ___
 
 ## The application window
 
-Click the bubble or the tray icon to open it. It appears next to whatever you clicked. Three tabs keep it compact:
+The main interface consists of three tabs to keep it compact. Click the bubble or the tray icon to open it. It appears next to whatever you clicked. The line under the title shows the latest status message, for example *Listening...* or why a click had no effect.
 
 > [!NOTE]
 >
@@ -171,9 +171,9 @@ On by default. The model is loaded at startup and kept in memory, so the first d
 | `Global shortcut` | Click it and press the new combo (Ctrl / Alt / Shift + key). | `Ctrl+Space` |
 | `Microphone` | The input device. *Windows default* follows the Windows sound settings, even while the app runs. | Windows default |
 | `Start with Windows` | Starts the app after sign-in. | Off |
-| `Type live into cursor` | Types the words while you speak. Use it in real text editors only. Off is safer. | Off |
-| `Copy final to clipboard` | Copies the full transcript once when the dictation stops. | On |
-| `Paste final on stop` | Pastes the transcript once when the dictation stops. | On |
+| `Type live into cursor` | Types the words while you speak. Turn it off for apps where keystrokes trigger shortcuts. | On |
+| `Copy final to clipboard` | Copies the full transcript once when the dictation stops. | Off |
+| `Paste final on stop` | Pastes the transcript once when the dictation stops. Leave it off while live typing is on, or the text appears twice. | Off |
 | `Soft sound cues` | Short, quiet chimes at start and stop. | On |
 | `Waveform animation` | Shows the live microphone level in the bubble while recording. | On |
 | `Animate the tray icon` | Lets the tray icon pulse while you speak. | On |
