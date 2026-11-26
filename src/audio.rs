@@ -345,27 +345,9 @@ impl InputCallback {
             self.was_recording = true;
         }
 
-        let mut mono = Vec::new();
-        let mut frame = Vec::with_capacity(self.channels);
-        for sample in samples {
-            frame.push(sample);
-            if frame.len() == self.channels {
-                let sum = frame.iter().sum::<f32>();
-                mono.push(sum / self.channels as f32);
-                frame.clear();
-            }
-        }
-
+        let mono = downmix_to_mono(samples, self.channels);
         if !mono.is_empty() {
-            // Loudness -> bar height. NOISE_FLOOR gates hiss; GAIN sets sensitivity so
-            // ordinary speech reaches most of the height; the sub-1.0 exponent lifts
-            // quiet syllables so they read as tall bumps instead of tiny specks.
-            const NOISE_FLOOR: f32 = 0.006;
-            const GAIN: f32 = 14.0;
-            const SHAPE: f32 = 0.6;
-            let rms = (mono.iter().map(|v| v * v).sum::<f32>() / mono.len() as f32).sqrt();
-            let norm = ((rms - NOISE_FLOOR) * GAIN).clamp(0.0, 1.0);
-            let level = norm.powf(SHAPE);
+            let (level, rms) = audio_level(&mono);
             report_level(&self.app, level, rms);
         }
 
@@ -375,6 +357,39 @@ impl InputCallback {
             let _ = self.tx.try_send(EngineCommand::Audio(out));
         }
     }
+}
+
+/// Averages interleaved frames of `channels` samples into one mono sample each.
+/// An incomplete frame at the end of the block is dropped.
+fn downmix_to_mono<I>(samples: I, channels: usize) -> Vec<f32>
+where
+    I: Iterator<Item = f32>,
+{
+    let mut mono = Vec::new();
+    let mut frame = Vec::with_capacity(channels);
+    for sample in samples {
+        frame.push(sample);
+        if frame.len() == channels {
+            let sum = frame.iter().sum::<f32>();
+            mono.push(sum / channels as f32);
+            frame.clear();
+        }
+    }
+    mono
+}
+
+/// Loudness of a non-empty mono block: the waveform bar height in 0.0..=1.0 and the RMS.
+fn audio_level(mono: &[f32]) -> (f32, f32) {
+    // Loudness -> bar height. NOISE_FLOOR gates hiss; GAIN sets sensitivity so
+    // ordinary speech reaches most of the height; the sub-1.0 exponent lifts
+    // quiet syllables so they read as tall bumps instead of tiny specks.
+    const NOISE_FLOOR: f32 = 0.006;
+    const GAIN: f32 = 14.0;
+    const SHAPE: f32 = 0.6;
+    let rms = (mono.iter().map(|v| v * v).sum::<f32>() / mono.len() as f32).sqrt();
+    let norm = ((rms - NOISE_FLOOR) * GAIN).clamp(0.0, 1.0);
+    let level = norm.powf(SHAPE);
+    (level, rms)
 }
 
 pub(crate) struct LinearResampler {
@@ -422,6 +437,128 @@ impl LinearResampler {
 
         self.last_sample = data.last().copied();
         self.position -= (data.len() - 1) as f64;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::TAU;
+
+    fn sine(frequency: f32, rate: f32, count: usize) -> Vec<f32> {
+        (0..count).map(|index| (TAU * frequency * index as f32 / rate).sin()).collect()
+    }
+
+    fn resample_whole(source_rate: f64, input: &[f32]) -> Vec<f32> {
+        let mut resampler = LinearResampler::new(source_rate, NEMOTRON_SAMPLE_RATE);
+        let mut output = Vec::new();
+        resampler.push(input, &mut output);
+        output
+    }
+
+    /// Feeds `input` in pieces of changing size, as audio callbacks deliver it.
+    fn resample_in_pieces(source_rate: f64, input: &[f32]) -> Vec<f32> {
+        const PIECE_SIZES: [usize; 6] = [1, 7, 480, 13, 1024, 2];
+        let mut resampler = LinearResampler::new(source_rate, NEMOTRON_SAMPLE_RATE);
+        let mut output = Vec::new();
+        let mut rest = input;
+        for size in PIECE_SIZES.iter().cycle() {
+            if rest.is_empty() {
+                break;
+            }
+            let (piece, remaining) = rest.split_at((*size).min(rest.len()));
+            resampler.push(piece, &mut output);
+            rest = remaining;
+        }
+        output
+    }
+
+    #[test]
+    fn resampler_produces_one_third_of_48_khz_samples() {
+        let output = resample_whole(48_000.0, &sine(440.0, 48_000.0, 4_800));
+        assert_eq!(output.len(), 1_600);
+    }
+
+    #[test]
+    fn resampler_keeps_the_frequency() {
+        for source_rate in [48_000.0, 44_100.0, 24_000.0] {
+            let output = resample_whole(source_rate, &sine(440.0, source_rate as f32, source_rate as usize / 10));
+            let expected = sine(440.0, NEMOTRON_SAMPLE_RATE as f32, output.len());
+            for (index, (actual, wanted)) in output.iter().zip(&expected).enumerate() {
+                // Linear interpolation of a 440 Hz sine stays well within this.
+                assert!((actual - wanted).abs() < 0.01, "{source_rate} Hz, sample {index}: {actual} vs {wanted}");
+            }
+        }
+    }
+
+    #[test]
+    fn resampler_output_does_not_depend_on_block_sizes() {
+        for source_rate in [48_000.0, 44_100.0, 24_000.0] {
+            let input = sine(440.0, source_rate as f32, 10_000);
+            let whole = resample_whole(source_rate, &input);
+            let pieces = resample_in_pieces(source_rate, &input);
+            assert_eq!(whole.len(), pieces.len(), "{source_rate} Hz");
+            for (index, (a, b)) in whole.iter().zip(&pieces).enumerate() {
+                assert!((a - b).abs() < 1e-5, "{source_rate} Hz, sample {index}: {a} vs {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn resampler_at_same_rate_holds_back_only_the_last_sample() {
+        let input = [0.1, 0.2, 0.3, 0.4];
+        assert_eq!(resample_whole(NEMOTRON_SAMPLE_RATE, &input), [0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn resampler_reset_forgets_the_previous_block() {
+        let mut resampler = LinearResampler::new(48_000.0, NEMOTRON_SAMPLE_RATE);
+        let mut output = Vec::new();
+        resampler.push(&[1.0; 100], &mut output);
+        resampler.reset();
+
+        let mut after_reset = Vec::new();
+        resampler.push(&[0.0; 100], &mut after_reset);
+        assert!(after_reset.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn resampler_ignores_empty_input() {
+        let mut resampler = LinearResampler::new(48_000.0, NEMOTRON_SAMPLE_RATE);
+        let mut output = Vec::new();
+        resampler.push(&[], &mut output);
+        assert!(output.is_empty());
+        assert_eq!(resampler.last_sample, None);
+    }
+
+    #[test]
+    fn downmix_averages_each_frame() {
+        let stereo = [1.0, 0.0, 0.5, -0.5, -1.0, -1.0];
+        assert_eq!(downmix_to_mono(stereo.into_iter(), 2), [0.5, 0.0, -1.0]);
+    }
+
+    #[test]
+    fn downmix_keeps_mono_and_drops_incomplete_frames() {
+        assert_eq!(downmix_to_mono([0.1, 0.2].into_iter(), 1), [0.1, 0.2]);
+        assert_eq!(downmix_to_mono([0.3, 0.3, 0.3, 0.9].into_iter(), 3), [0.3]);
+    }
+
+    #[test]
+    fn level_is_zero_for_silence_and_noise() {
+        assert_eq!(audio_level(&[0.0; 64]), (0.0, 0.0));
+        let (level, rms) = audio_level(&[0.005; 64]);
+        assert_eq!(level, 0.0);
+        assert!((rms - 0.005).abs() < 1e-6);
+    }
+
+    #[test]
+    fn level_rises_with_loudness_and_is_capped() {
+        let (quiet, _) = audio_level(&[0.02; 64]);
+        let (louder, _) = audio_level(&[0.05; 64]);
+        assert!(0.0 < quiet && quiet < louder && louder < 1.0, "{quiet} < {louder}");
+        let (loud, rms) = audio_level(&[0.5; 64]);
+        assert_eq!(loud, 1.0);
+        assert!((rms - 0.5).abs() < 1e-6);
     }
 }
 
