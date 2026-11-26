@@ -756,3 +756,132 @@ fn replace_file(source: &Path, target: &Path) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_hex_is_lowercase_and_zero_padded() {
+        assert_eq!(to_hex(&[0x00, 0x0f, 0xab, 0xff]), "000fabff");
+        assert_eq!(to_hex(&[]), "");
+    }
+
+    #[test]
+    fn hash_file_matches_known_sha256_and_reports_progress() {
+        let dir = TestDir::new("hash");
+        let path = dir.path().join("abc.txt");
+        fs::write(&path, "abc").unwrap();
+
+        let mut reported = 0;
+        let hash = hash_file(&path, |bytes| reported += bytes).unwrap();
+        assert_eq!(hash, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(reported, 3);
+    }
+
+    #[test]
+    fn hash_file_fails_for_missing_file() {
+        let dir = TestDir::new("hash-missing");
+        assert!(hash_file(&dir.path().join("missing"), |_| {}).is_err());
+    }
+
+    #[test]
+    fn remote_total_size_sums_files() {
+        let remote = RemoteModel {
+            date: String::new(),
+            commit: String::new(),
+            title: String::new(),
+            files: vec![
+                ModelFile { size: 10, ..Default::default() },
+                ModelFile { size: 32, ..Default::default() },
+            ],
+        };
+        assert_eq!(remote.total_size(), 42);
+    }
+
+    /// Writes every model file into `dir` and returns a manifest that matches them.
+    fn write_model(dir: &Path, date: Option<&str>) -> ModelManifest {
+        let files = MODEL_FILES
+            .iter()
+            .map(|name| {
+                let path = dir.join(name);
+                fs::write(&path, format!("content of {name}")).unwrap();
+                let meta = fs::metadata(&path).unwrap();
+                ModelFile {
+                    name: name.to_string(),
+                    size: meta.len(),
+                    sha256: String::new(),
+                    modified: file_modified(&meta),
+                }
+            })
+            .collect();
+        ModelManifest {
+            date: date.map(str::to_string),
+            files,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn manifest_matches_unchanged_files() {
+        let dir = TestDir::new("manifest-match");
+        let manifest = write_model(dir.path(), None);
+        assert!(manifest_matches_disk(&manifest, dir.path()));
+    }
+
+    #[test]
+    fn manifest_does_not_match_changed_size() {
+        let dir = TestDir::new("manifest-size");
+        let mut manifest = write_model(dir.path(), None);
+        manifest.files[0].size += 1;
+        assert!(!manifest_matches_disk(&manifest, dir.path()));
+    }
+
+    #[test]
+    fn manifest_does_not_match_missing_file() {
+        let dir = TestDir::new("manifest-missing");
+        let manifest = write_model(dir.path(), None);
+        fs::remove_file(dir.path().join(MODEL_FILES[0])).unwrap();
+        assert!(!manifest_matches_disk(&manifest, dir.path()));
+    }
+
+    #[test]
+    fn manifest_round_trips_through_its_file() {
+        let dir = TestDir::new("manifest-file");
+        let manifest = write_model(dir.path(), Some("2026-10-22"));
+        write_manifest(dir.path(), &manifest);
+
+        let restored = read_manifest(dir.path()).expect("the manifest is read back");
+        assert_eq!(restored.date.as_deref(), Some("2026-10-22"));
+        assert!(manifest_matches_disk(&restored, dir.path()));
+    }
+
+    #[test]
+    fn backup_is_named_after_the_installed_version() {
+        let root = TestDir::new("backup-date");
+        let dir = root.path().join("nemotron");
+        fs::create_dir_all(&dir).unwrap();
+        write_manifest(&dir, &write_model(&dir, Some("2026-10-22")));
+
+        let first = backup_model(&dir).unwrap();
+        let second = backup_model(&dir).unwrap();
+        assert_eq!(first, root.path().join("nemotron_2026-10-22"));
+        assert_eq!(second, root.path().join("nemotron_2026-10-22-2"));
+
+        for name in MODEL_FILES.iter().chain([&MANIFEST_NAME]) {
+            assert_eq!(fs::read(first.join(name)).unwrap(), fs::read(dir.join(name)).unwrap(), "{name}");
+        }
+    }
+
+    #[test]
+    fn backup_without_manifest_is_named_unknown() {
+        let root = TestDir::new("backup-unknown");
+        let dir = root.path().join("nemotron_multi");
+        fs::create_dir_all(&dir).unwrap();
+        write_model(&dir, None);
+
+        let backup = backup_model(&dir).unwrap();
+        assert_eq!(backup, root.path().join("nemotron_multi_unknown"));
+        assert!(!backup.join(MANIFEST_NAME).exists());
+    }
+}

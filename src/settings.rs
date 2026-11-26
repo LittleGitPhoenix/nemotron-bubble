@@ -467,3 +467,120 @@ pub(crate) fn log_dir() -> PathBuf {
     app_root_dir().join("log")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_language_returns_canonical_code() {
+        assert_eq!(normalize_language("de"), "de");
+        assert_eq!(normalize_language(" DE "), "de");
+        assert_eq!(normalize_language("ja-jp"), "ja-JP");
+    }
+
+    #[test]
+    fn normalize_language_falls_back_to_auto() {
+        assert_eq!(normalize_language("xx"), "auto");
+        assert_eq!(normalize_language(""), "auto");
+        // Japanese only exists with its region suffix.
+        assert_eq!(normalize_language("ja"), "auto");
+    }
+
+    #[test]
+    fn language_label_matches_code() {
+        assert_eq!(language_label("de"), "German");
+        assert_eq!(language_label("VI-vn"), "Vietnamese");
+        assert_eq!(language_label("unknown"), "Auto-detect");
+    }
+
+    #[test]
+    fn language_codes_are_unique() {
+        for (index, (code, _)) in LANGUAGES.iter().enumerate() {
+            assert!(
+                LANGUAGES[index + 1..].iter().all(|(other, _)| !other.eq_ignore_ascii_case(code)),
+                "{code} is listed twice"
+            );
+        }
+    }
+
+    #[test]
+    fn bubble_position_round_trips_through_its_key() {
+        for position in BubblePosition::ALL {
+            assert_eq!(BubblePosition::from(String::from(position)), position);
+        }
+        assert_eq!(BubblePosition::from(" Top-Center ".to_string()), BubblePosition::TopCenter);
+        assert_eq!(BubblePosition::from("middle".to_string()), BubblePosition::BottomRight);
+    }
+
+    #[test]
+    fn compute_choice_round_trips_and_defaults_to_cpu() {
+        for choice in ComputeChoice::ALL {
+            assert_eq!(ComputeChoice::from(String::from(choice)), choice);
+        }
+        assert_eq!(ComputeChoice::from(" GPU ".to_string()), ComputeChoice::Gpu);
+        assert_eq!(ComputeChoice::from("quantum".to_string()), ComputeChoice::Cpu);
+    }
+
+    #[test]
+    fn model_choice_parse_rejects_unknown_values() {
+        for choice in ModelChoice::ALL {
+            assert_eq!(ModelChoice::parse(choice.key()), Some(choice));
+        }
+        assert_eq!(ModelChoice::parse(" Multilingual "), Some(ModelChoice::Multilingual));
+        // The old "auto" value must be re-detected by load_settings.
+        assert_eq!(ModelChoice::parse("auto"), None);
+    }
+
+    #[test]
+    fn model_choice_folder_names() {
+        assert_eq!(ModelChoice::English.folder_name(), Some("nemotron"));
+        assert_eq!(ModelChoice::Multilingual.folder_name(), Some("nemotron_multi"));
+        assert_eq!(ModelChoice::Predefined.folder_name(), None);
+    }
+
+    fn to_json(settings: &AppSettings) -> serde_json::Value {
+        serde_json::to_value(settings).expect("settings serialize")
+    }
+
+    #[test]
+    fn empty_settings_file_yields_defaults() {
+        let settings: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(to_json(&settings), to_json(&AppSettings::default()));
+    }
+
+    #[test]
+    fn partial_settings_keep_defaults_for_missing_fields() {
+        let settings: AppSettings =
+            serde_json::from_str(r#"{ "model": "multilingual", "language": "de", "unknown_field": 1 }"#).unwrap();
+        assert_eq!(settings.model, ModelChoice::Multilingual);
+        assert_eq!(settings.language, "de");
+        assert_eq!(settings.history_limit, AppSettings::default().history_limit);
+    }
+
+    #[test]
+    fn invalid_choice_values_do_not_invalidate_settings() {
+        let settings: AppSettings =
+            serde_json::from_str(r#"{ "compute": "quantum", "bubble_position": "middle", "model": "auto" }"#).unwrap();
+        assert_eq!(settings.compute, ComputeChoice::Cpu);
+        assert_eq!(settings.bubble_position, BubblePosition::BottomRight);
+        assert_eq!(settings.model, ModelChoice::English);
+    }
+
+    #[test]
+    fn settings_round_trip_with_settings_json_spelling() {
+        let mut settings = AppSettings::default();
+        settings.model = ModelChoice::Predefined;
+        settings.compute = ComputeChoice::Auto;
+        settings.bubble_position = BubblePosition::TopLeft;
+        settings.microphone = "Microphone (USB Audio)".to_string();
+
+        let json = to_json(&settings);
+        assert_eq!(json["model"], "predefined");
+        assert_eq!(json["compute"], "auto");
+        assert_eq!(json["bubble_position"], "top-left");
+
+        let restored: AppSettings = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(to_json(&restored), json);
+    }
+}
+
