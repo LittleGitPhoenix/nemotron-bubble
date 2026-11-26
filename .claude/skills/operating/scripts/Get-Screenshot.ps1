@@ -6,7 +6,7 @@
 	include popup menus. Its pixels have the same origin as Invoke-Target.ps1 -X/-Y.
 	-Screen: a screen capture of the settings window united with the open popup menus. The app keeps both topmost.
 	-Window Bubble: the floating bubble. It is a layered window, so it is always captured from the screen.
-	-Delay waits first (animations, a running download). -Crop x,y,w,h and -Zoom n cut out and enlarge a detail.
+	-Delay waits that many seconds first (animations, a running download). -Crop x,y,w,h and -Zoom n cut out and enlarge a detail.
 #>
 param
 (
@@ -14,7 +14,7 @@ param
 	[Parameter(Mandatory)][string]$Out,
 	[ValidateSet('Settings', 'Bubble')][string]$Window = 'Settings',
 	[switch]$Screen,
-	[double]$Delay = 0,
+	[ValidateRange(0, 60)][double]$Delay = 0, # Seconds, not milliseconds.
 	[int[]]$Crop,
 	[double]$Zoom = 1
 )
