@@ -3,7 +3,13 @@
 use crate::*;
 
 pub(crate) const NEMOTRON_SAMPLE_RATE: f64 = 16_000.0;
-pub(crate) const NEMOTRON_CHUNK_SIZE: usize = 8_960; // 560 ms at 16 kHz.
+
+/// Length of the model's streaming chunk in milliseconds, e.g. 560 for the
+/// default export. The chunk size itself comes from the model (`chunk_samples`),
+/// because it depends on the latency profile the model was exported with.
+pub(crate) fn chunk_duration_ms(model: &Nemotron) -> f64 {
+    model.chunk_samples() as f64 * 1000.0 / NEMOTRON_SAMPLE_RATE
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum EngineCommand {
@@ -18,15 +24,103 @@ pub(crate) enum EngineCommand {
     Shutdown,
 }
 
+/// The audio side of one dictation, free of UI and output: collects 16 kHz
+/// samples into the model's chunks, transcribes them, and on stop transcribes the
+/// buffered rest and a few chunks of silence. Tests feed recorded audio through it.
+pub(crate) struct Dictation {
+    buffer: Vec<f32>,
+    // Inference time of the current dictation, logged on stop (GPU vs CPU check).
+    chunk_time: Duration,
+    chunk_count: u32,
+}
+
+/// The outcome of a finished dictation.
+pub(crate) struct FinishedDictation {
+    pub(crate) transcript: String,
+    /// Chunks transcribed while recording. The rest and the silence flush on stop are not counted.
+    pub(crate) chunk_count: u32,
+    /// Average inference time per chunk. None when no full chunk was transcribed.
+    pub(crate) ms_per_chunk: Option<f32>,
+}
+
+impl Dictation {
+    pub(crate) fn new() -> Self {
+        Self {
+            buffer: Vec::new(),
+            chunk_time: Duration::ZERO,
+            chunk_count: 0,
+        }
+    }
+
+    /// Starts a new dictation and resets the model's streaming state.
+    pub(crate) fn start(&mut self, model: &mut Nemotron) {
+        self.buffer.clear();
+        self.chunk_time = Duration::ZERO;
+        self.chunk_count = 0;
+        model.reset();
+    }
+
+    /// Adds 16 kHz samples and transcribes every complete chunk. `on_text`
+    /// receives the new text of each chunk that produced some. Stops at the
+    /// first error.
+    pub(crate) fn push_audio(&mut self, model: &mut Nemotron, samples: &[f32], mut on_text: impl FnMut(&str)) -> Result<()> {
+        let chunk_size = model.chunk_samples();
+        self.buffer.extend_from_slice(samples);
+        while self.buffer.len() >= chunk_size {
+            let chunk: Vec<f32> = self.buffer.drain(..chunk_size).collect();
+            let started = Instant::now();
+            let result = model.transcribe_chunk(&chunk);
+            self.chunk_time += started.elapsed();
+            self.chunk_count += 1;
+            let text = result.map_err(|err| anyhow!("{err:#}"))?;
+            if !text.is_empty() {
+                on_text(&text);
+            }
+        }
+        Ok(())
+    }
+
+    /// Transcribes the buffered rest (padded with silence to a full chunk) and
+    /// `flush_passes` chunks of silence, which let the model emit its last words.
+    /// `on_text` receives the text these passes add. Their errors are ignored,
+    /// because the text recognized so far is still worth keeping.
+    pub(crate) fn finish(&mut self, model: &mut Nemotron, flush_passes: usize, mut on_text: impl FnMut(&str)) -> FinishedDictation {
+        let chunk_size = model.chunk_samples();
+        let mut transcribe = |chunk: &[f32]| {
+            if let Ok(text) = model.transcribe_chunk(chunk) {
+                if !text.is_empty() {
+                    on_text(&text);
+                }
+            }
+        };
+        if !self.buffer.is_empty() {
+            self.buffer.resize(chunk_size, 0.0);
+            transcribe(&self.buffer);
+            self.buffer.clear();
+        }
+        let silence = vec![0.0; chunk_size];
+        for _ in 0..flush_passes {
+            transcribe(&silence);
+        }
+
+        let finished = FinishedDictation {
+            transcript: model.get_transcript(),
+            chunk_count: self.chunk_count,
+            ms_per_chunk: (self.chunk_count > 0)
+                .then(|| self.chunk_time.as_secs_f32() * 1000.0 / self.chunk_count as f32),
+        };
+        self.chunk_time = Duration::ZERO;
+        self.chunk_count = 0;
+        finished
+    }
+}
+
 pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
     let mut model: Option<Nemotron> = None;
     let mut model_path = PathBuf::new();
     let mut on_gpu = false;
-    // Inference time of the current dictation, logged on stop (GPU vs CPU check).
-    let mut chunk_time = Duration::ZERO;
-    let mut chunk_count = 0u32;
     let mut active = false;
-    let mut audio_buffer = Vec::<f32>::with_capacity(NEMOTRON_CHUNK_SIZE * 2);
+    let mut dictation = Dictation::new();
     // Set after a failed background preload so that unrelated settings toggles
     // (each of which re-sends Preload) don't pop the same error dialog again.
     // Cleared by a model switch (Unload); an explicit Start always retries.
@@ -75,7 +169,6 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
             }
             Ok(EngineCommand::Unload) => {
                 active = false;
-                audio_buffer.clear();
                 preload_failed = false;
                 if model.take().is_some() {
                     log_info(&format!("Unloaded Nemotron model from {}", model_path.display()));
@@ -100,9 +193,6 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                 }
             }
             Ok(EngineCommand::Start) => {
-                audio_buffer.clear();
-                chunk_time = Duration::ZERO;
-                chunk_count = 0;
                 if model.is_none() {
                     update_ui(&app, |ui| {
                         ui.status = "Loading Nemotron model...".to_string();
@@ -137,7 +227,7 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                 }
 
                 if let Some(model) = model.as_mut() {
-                    model.reset();
+                    dictation.start(model);
                     active = true;
                     update_ui(&app, |ui| {
                         ui.recording = true;
@@ -156,52 +246,41 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                     continue;
                 };
 
-                audio_buffer.extend(samples);
-                while audio_buffer.len() >= NEMOTRON_CHUNK_SIZE {
-                    let chunk: Vec<f32> = audio_buffer.drain(..NEMOTRON_CHUNK_SIZE).collect();
-                    let chunk_started = Instant::now();
-                    let result = model.transcribe_chunk(&chunk);
-                    chunk_time += chunk_started.elapsed();
-                    chunk_count += 1;
-                    match result {
-                        Ok(text) if !text.is_empty() => {
-                            let settings = settings_snapshot(&app);
-                            let live_type = settings.live_type_into_cursor;
-                            // Type the new words directly via Unicode keystrokes —
-                            // the clipboard stays untouched until the final stop.
-                            let type_result = if live_type {
-                                type_unicode_text(
-                                    &text,
-                                    hwnd_from_app(&app),
-                                    target_hwnd_from_app(&app),
-                                    settings.paste_delay_ms,
-                                )
-                            } else {
-                                Ok(())
-                            };
-                            update_ui(&app, |ui| {
-                                ui.status = if let Err(err) = type_result {
-                                    format!("Live typing failed: {err}")
-                                } else if live_type {
-                                    "Listening... typing live.".to_string()
-                                } else {
-                                    "Listening...".to_string()
-                                };
-                                ui.transcript.push_str(&text);
-                            });
-                        }
-                        Ok(_) => {}
-                        Err(err) => {
-                            log_error(&format!("ASR error while transcribing: {err:#}"));
-                            active = false;
-                            app.recording.store(false, Ordering::SeqCst);
-                            update_ui(&app, |ui| {
-                                ui.recording = false;
-                                ui.status = "ASR error.".to_string();
-                                ui.transcript = format!("{err:#}");
-                            });
-                        }
-                    }
+                let result = dictation.push_audio(model, &samples, |text| {
+                    let settings = settings_snapshot(&app);
+                    let live_type = settings.live_type_into_cursor;
+                    // Type the new words directly via Unicode keystrokes —
+                    // the clipboard stays untouched until the final stop.
+                    let type_result = if live_type {
+                        type_unicode_text(
+                            text,
+                            hwnd_from_app(&app),
+                            target_hwnd_from_app(&app),
+                            settings.paste_delay_ms,
+                        )
+                    } else {
+                        Ok(())
+                    };
+                    update_ui(&app, |ui| {
+                        ui.status = if let Err(err) = type_result {
+                            format!("Live typing failed: {err}")
+                        } else if live_type {
+                            "Listening... typing live.".to_string()
+                        } else {
+                            "Listening...".to_string()
+                        };
+                        ui.transcript.push_str(text);
+                    });
+                });
+                if let Err(err) = result {
+                    log_error(&format!("ASR error while transcribing: {err:#}"));
+                    active = false;
+                    app.recording.store(false, Ordering::SeqCst);
+                    update_ui(&app, |ui| {
+                        ui.recording = false;
+                        ui.status = "ASR error.".to_string();
+                        ui.transcript = format!("{err:#}");
+                    });
                 }
             }
             Ok(EngineCommand::Stop) => {
@@ -212,36 +291,23 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                 if active {
                     active = false;
                     if let Some(model) = model.as_mut() {
-                        if !audio_buffer.is_empty() {
-                            audio_buffer.resize(NEMOTRON_CHUNK_SIZE, 0.0);
-                            if let Ok(text) = model.transcribe_chunk(&audio_buffer) {
-                                paste_live_tail(&app, &text);
-                            }
-                            audio_buffer.clear();
-                        }
                         let flush_passes = if fast { 0 } else { 3 };
-                        for _ in 0..flush_passes {
-                            if let Ok(text) = model.transcribe_chunk(&vec![0.0; NEMOTRON_CHUNK_SIZE])
-                            {
-                                paste_live_tail(&app, &text);
-                            }
-                        }
+                        let finished = dictation.finish(model, flush_passes, |text| paste_live_tail(&app, text));
 
-                        let stats = (chunk_count > 0).then(|| DictationStats {
-                            on_gpu,
-                            ms_per_chunk: chunk_time.as_secs_f32() * 1000.0 / chunk_count as f32,
-                        });
+                        let stats = finished
+                            .ms_per_chunk
+                            .map(|ms_per_chunk| DictationStats { on_gpu, ms_per_chunk });
                         if let Some(stats) = &stats {
                             log_info(&format!(
-                                "Dictation: {chunk_count} chunks, {:.0} ms per 560 ms chunk on the {}",
+                                "Dictation: {} chunks, {:.0} ms per {:.0} ms chunk on the {}",
+                                finished.chunk_count,
+                                chunk_duration_ms(model),
                                 stats.ms_per_chunk,
                                 if stats.on_gpu { "GPU" } else { "CPU" }
                             ));
                         }
-                        chunk_time = Duration::ZERO;
-                        chunk_count = 0;
 
-                        let final_text = model.get_transcript();
+                        let final_text = finished.transcript;
                         let has_final = !final_text.trim().is_empty();
                         let settings = settings_snapshot(&app);
                         let mut final_status = if has_final {
@@ -375,5 +441,101 @@ pub(crate) fn stop_recording(app: &Arc<AppState>) {
         ui.recording = false;
         ui.status = "Finalizing...".to_string();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// "Hello world, what a wonderful day." (16-bit PCM, mono, 24 kHz).
+    const SAMPLE: &[u8] = include_bytes!("../tests/data/audio-test.wav");
+    const SAMPLE_WORDS: [&str; 4] = ["hello", "world", "wonderful", "day"];
+
+    /// Each model needs about 2.5 GB of RAM, so the model tests run one after another.
+    static MODEL_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Loads a model on the CPU from the folder that NEMOTRON_TEST_MODELS points to.
+    /// The app never reads that variable, and build-wsl.ps1 -Test -WithModels sets
+    /// it for the test process only.
+    fn load_test_model(choice: ModelChoice) -> Nemotron {
+        let models = env::var_os("NEMOTRON_TEST_MODELS").map(PathBuf::from).expect(
+            "NEMOTRON_TEST_MODELS must point to a models folder with nemotron and nemotron_multi \
+             (build-wsl.ps1 -Test -WithModels sets it)",
+        );
+        let dir = models.join(choice.folder_name().expect("a standard model"));
+        assert!(has_model_files(&dir), "no model files in {}", dir.display());
+        load_with_device(&dir, false).unwrap_or_else(|err| panic!("{err:#}"))
+    }
+
+    /// Feeds the sample through the app's path from the capture callback on:
+    /// downmix, resampling to 16 kHz in 20 ms blocks and the dictation itself.
+    /// Returns the final transcript and the text that would have been typed live.
+    fn dictate_sample(model: &mut Nemotron) -> (String, String) {
+        let wav = read_wav(SAMPLE).expect("the sample is a valid WAV file");
+        let mut resampler = LinearResampler::new(wav.sample_rate as f64, NEMOTRON_SAMPLE_RATE);
+        let mut dictation = Dictation::new();
+        let mut live = String::new();
+
+        dictation.start(model);
+        let block = wav.channels * wav.sample_rate as usize / 50;
+        for samples in wav.samples.chunks(block) {
+            let mono = downmix_to_mono(samples.iter().copied(), wav.channels);
+            let mut resampled = Vec::new();
+            resampler.push(&mono, &mut resampled);
+            dictation
+                .push_audio(model, &resampled, |text| live.push_str(text))
+                .unwrap_or_else(|err| panic!("{err:#}"));
+        }
+        let finished = dictation.finish(model, 3, |text| live.push_str(text));
+        assert!(finished.chunk_count > 0, "the sample is longer than one chunk");
+        assert!(finished.ms_per_chunk.is_some());
+        (finished.transcript, live)
+    }
+
+    fn assert_recognized(transcript: &str, live: &str) {
+        let lowercase = transcript.to_lowercase();
+        let words: Vec<&str> = lowercase
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .collect();
+        for expected in SAMPLE_WORDS {
+            assert!(words.contains(&expected), "\"{expected}\" is missing in \"{transcript}\"");
+        }
+        assert_eq!(live.trim(), transcript.trim(), "live text and final transcript differ");
+    }
+
+    #[test]
+    #[ignore = "needs the speech models, run with build-wsl.ps1 -Test -WithModels"]
+    fn english_model_recognizes_the_sample() {
+        let _lock = MODEL_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut model = load_test_model(ModelChoice::English);
+        assert_eq!(model.mode(), NemotronMode::EnglishOnly);
+        // The README and CHANGELOG describe the downloadable models with 560 ms chunks.
+        assert_eq!(chunk_duration_ms(&model), 560.0);
+
+        let (transcript, live) = dictate_sample(&mut model);
+        println!("English: {transcript}");
+        assert_recognized(&transcript, &live);
+
+        // A second dictation starts from a clean state.
+        let (again, _) = dictate_sample(&mut model);
+        assert_eq!(again, transcript);
+    }
+
+    #[test]
+    #[ignore = "needs the speech models, run with build-wsl.ps1 -Test -WithModels"]
+    fn multilingual_model_recognizes_the_sample() {
+        let _lock = MODEL_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut model = load_test_model(ModelChoice::Multilingual);
+        assert_eq!(model.mode(), NemotronMode::Multilingual);
+        assert_eq!(chunk_duration_ms(&model), 560.0);
+
+        for language in ["auto", "en"] {
+            apply_language(&mut model, language).unwrap_or_else(|err| panic!("{err:#}"));
+            let (transcript, live) = dictate_sample(&mut model);
+            println!("Multilingual ({language}): {transcript}");
+            assert_recognized(&transcript, &live);
+        }
+    }
 }
 

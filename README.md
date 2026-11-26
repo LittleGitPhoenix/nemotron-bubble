@@ -236,11 +236,21 @@ cargo run --release --features assets -- --render-icon assets/nemotron-bubble.ic
 
 ### Tests
 
-The unit tests live next to the code they test, in a `#[cfg(test)] mod tests` block at the end of each file. They cover the pure logic: settings and history files, language and choice values, model manifest checks and backups, hashing and the Win32 string helpers. The UI, the hotkey, audio capture and speech recognition are not covered.
+The unit tests live next to the code they test, in a `#[cfg(test)] mod tests` block at the end of each file. They cover the pure logic: settings and history files, language and choice values, model manifest checks and backups, hashing, resampling, downmixing, the level meter and the Win32 string helpers. The UI, the hotkey, the capture device and typing into other windows are not covered.
 
 ```powershell
 cargo test
 ```
+
+Two model tests feed the recording in `tests/data/audio-test.wav` ("Hello world, what a wonderful day.") through the same downmix, resampling and dictation code the app uses, once with the English and once with the multilingual model, and check the recognized words. They need both models, so they are marked `#[ignore]`. Point `NEMOTRON_TEST_MODELS` at a `models` folder that contains `nemotron` and `nemotron_multi`, for the test run only:
+
+```powershell
+$env:NEMOTRON_TEST_MODELS = "$PWD\target\release\models"
+cargo test -- --include-ignored
+Remove-Item Env:\NEMOTRON_TEST_MODELS
+```
+
+The app itself never reads `NEMOTRON_TEST_MODELS`.
 
 When cross-compiling from Linux or WSL with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin), the test exe is a Windows program. cargo-xwin starts it through Wine by default. Inside WSL it can run directly on Windows instead:
 
