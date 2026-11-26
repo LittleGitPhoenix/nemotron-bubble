@@ -8,8 +8,8 @@ $script:RepoRoot = (Resolve-Path "$PSScriptRoot\..\..\..\..").Path
 # user's own installation. Never start, stop or overwrite it from these scripts.
 $script:UserInstallDir = Join-Path $script:RepoRoot 'target\wsl-release'
 $script:WindowClass = 'NemotronBubbleWindow'
-$script:BubbleTitle = 'Nemotron Bubble'
-$script:SettingsTitle = 'Nemotron Bubble Settings'
+$script:BubbleTitle = 'Nemotron Floating Bubble'
+$script:ApplicationWindowTitle = 'Nemotron Bubble'
 
 if (-not ('NemoNative' -as [type]))
 {
@@ -59,11 +59,11 @@ $script:WM_TRAYICON = 0x0401 # WM_USER + 1, see src/ui/tray.rs
 
 function Get-MakeLParam([int]$X, [int]$Y) { [IntPtr](($Y -shl 16) -bor ($X -band 0xFFFF)) }
 
-# A window of the test instance: 'Bubble' (also the tray icon's message window) or 'Settings'.
+# A window of the test instance: 'Bubble' (also the tray icon's message window) or 'Application' (the application window).
 # Always filtered by process id, so the user's own running instance is never touched.
-function Get-NemoWindow([int]$ProcessId, [ValidateSet('Bubble', 'Settings')][string]$Window)
+function Get-NemoWindow([int]$ProcessId, [ValidateSet('Bubble', 'Application')][string]$Window)
 {
-	$title = if ($Window -eq 'Settings') { $script:SettingsTitle } else { $script:BubbleTitle }
+	$title = if ($Window -eq 'Application') { $script:ApplicationWindowTitle } else { $script:BubbleTitle }
 	$handle = [NemoNative]::Find([uint32]$ProcessId, $script:WindowClass, $title) | Select-Object -First 1
 	if (-not $handle) { throw "No '$Window' window for process $ProcessId. Is it the PID that Start-Nemotron.ps1 printed?" }
 	$handle

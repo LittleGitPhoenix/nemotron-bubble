@@ -16,7 +16,7 @@ This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike
 
 | Change | Description |
 | --- | --- |
-| **Redesigned settings window** | A compact window with three tabs (*History*, *Model*, *Settings*) that opens right next to the bubble or the tray icon. Each history entry has a copy icon and shows how fast it was processed. |
+| **Redesigned application window** | A compact window with three tabs (*History*, *Model*, *Settings*) that opens right next to the bubble or the tray icon. Each history entry has a copy icon and shows how fast it was processed. |
 | **Multilingual model fixed** | The multilingual Nemotron model crashed while loading and left the app without speech recognition. It now loads reliably and can be selected next to the English model. |
 | **Bubble position presets** | Place the floating bubble in one of six positions (top or bottom, each left, center or right). The choice is saved. |
 | **Microphone selection** | Choose the input device in the app instead of in the Windows settings. *Windows default* follows a change of the Windows default device without restarting the app. |
@@ -27,7 +27,7 @@ This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike
 | **Close from the bubble** | A ✕ appears on the bubble's top-right edge while the mouse is over it and quits the app, so the tray menu is no longer the only way out. |
 | **Clear error feedback** | A model that fails to load shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
 | **Portable** | Settings, history and logs are stored next to the exe instead of in `%APPDATA%`. |
-| **App icon and version** | The exe has its own icon, and the version is shown in the settings window, the tray menu and the file properties. |
+| **App icon and version** | The exe has its own icon, and the version is shown in the application window, the tray menu and the file properties. |
 
 ___
 
@@ -51,7 +51,7 @@ ___
 
 ___
 
-## The settings window
+## The application window
 
 Click the bubble or the tray icon to open it. It appears next to whatever you clicked. Three tabs keep it compact:
 
@@ -62,9 +62,9 @@ Click the bubble or the tray icon to open it. It appears next to whatever you cl
     <th width="33%">Settings</th>
   </tr>
   <tr>
-    <td><img src="docs/settings-history.png" width="260" alt="History tab" /></td>
-    <td><img src="docs/settings-model.png" width="260" alt="Model tab" /></td>
-    <td><img src="docs/settings-settings.png" width="260" alt="Settings tab" /></td>
+    <td><img src="docs/window-history.png" width="260" alt="History tab" /></td>
+    <td><img src="docs/window-model.png" width="260" alt="Model tab" /></td>
+    <td><img src="docs/window-settings.png" width="260" alt="Settings tab" /></td>
   </tr>
   <tr>
     <td valign="top">Recent dictations, newest first. The icon in front of each entry copies its text. The grey line shows when it was dictated, on which device, and the processing time per audio chunk. The trash bin clears the history.</td>
@@ -93,17 +93,9 @@ ___
 
 ## Quick start
 
-```powershell
-git clone https://github.com/LittleGitPhoenix/nemotron-bubble.git
-cd nemotron-bubble
+Download a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page.
 
-# Build and run
-cargo run --release
-```
-
-Or grab a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page.
-
-On the first start no speech model is installed yet. Open the settings window, go to the *Model* tab and click **Download** next to *English* or *Multilingual* (about 2.5 GB each). The app downloads the files from Hugging Face into `models\` next to the exe, verifies them and loads the model. You can also point at a custom folder with `$env:NEMOTRON_MODEL_DIR = "C:\path\to\nemotron"`.
+On the first start no speech model is installed yet. Open the application window, go to the *Model* tab and click **Download** next to either **_English_** or **_Multilingual_** (about 2.5 GB each). The app downloads the files from Hugging Face into `models\` next to the exe, verifies them and loads the model. You can also point at a custom folder with `$env:NEMOTRON_MODEL_DIR = "C:\path\to\nemotron"`.
 
 ### Downloads and updates
 
@@ -122,9 +114,9 @@ Pick the model under **Speech model** on the *Model* tab (or in the tray menu):
 
 | Choice | Loads |
 | --- | --- |
-| **Predefined** | the folder in `NEMOTRON_MODEL_DIR`, otherwise `"model_dir"` from `config\settings.json` |
 | **English** | `models\nemotron` |
 | **Multilingual** | `models\nemotron_multi`, which detects the spoken language automatically |
+| **Predefined** | the folder in `NEMOTRON_MODEL_DIR`, otherwise `"model_dir"` from `config\settings.json` |
 
 `models\` is searched in the working directory, next to the exe and up to four parent folders. On first start the choice is detected: **Predefined** if one of its folders is set, otherwise **English** if installed, otherwise **Multilingual**. Switching unloads the old model first. With *Preload Nemotron* on, the new one loads right away. The line under *Speech model* shows what is loaded, as reported by the model itself.
 
@@ -180,7 +172,7 @@ ___
 | Start / stop dictation | your shortcut (default `Ctrl+Space`) |
 | Change the shortcut | *Settings* tab → click *Global shortcut*, press the new combo |
 | Choose the microphone | *Settings* tab → *Microphone*. *Windows default* follows the Windows sound settings. |
-| Open / close the settings window | click the bubble (opens next to it) **or** the tray icon (opens next to the tray) |
+| Open / close the application window | click the bubble (opens next to it) **or** the tray icon (opens next to the tray) |
 | Move the bubble | pick a preset under *Settings* tab → *Bubble position* (saved), or drag it (until the next start) |
 | Copy a past dictation | *History* tab → the copy icon in front of the entry |
 | Tray menu (start/stop, show/hide bubble, speech model, language, processing, quit) | right-click the tray icon |
@@ -211,11 +203,11 @@ Nemotron Bubble is a Rust app built directly on the Win32 API. There is no Elect
 | `src/assets.rs` | README art and exe icon export (`assets` feature only) |
 | `src/ui/canvas.rs` | Drawing toolkit: canvas, anti-aliased shapes, text, fonts |
 | `src/ui/bubble.rs` | The floating bubble: drawing, animation, placement, dragging |
-| `src/ui/settings_window/mod.rs` | The settings window frame: header, tab bar, placement, dispatch to the tabs |
-| `src/ui/settings_window/history_tab.rs` | The *History* tab |
-| `src/ui/settings_window/model_tab.rs` | The *Model* tab |
-| `src/ui/settings_window/settings_tab.rs` | The *Settings* tab |
-| `src/ui/settings_window/widgets.rs` | Controls shared by the tabs: toggles, buttons, segmented controls, scrollbar |
+| `src/ui/application_window/mod.rs` | The application window frame: header, tab bar, placement, dispatch to the tabs |
+| `src/ui/application_window/history_tab.rs` | The *History* tab |
+| `src/ui/application_window/model_tab.rs` | The *Model* tab |
+| `src/ui/application_window/settings_tab.rs` | The *Settings* tab |
+| `src/ui/application_window/widgets.rs` | Controls shared by the tabs: toggles, buttons, segmented controls, scrollbar |
 | `src/ui/tray.rs` | Tray icon and tray menu |
 | `src/ui/window.rs` | Window class, message loop, message dispatch |
 
@@ -226,10 +218,16 @@ ___
 ## Build
 
 ```powershell
-cargo build --release            # the app
+git clone https://github.com/LittleGitPhoenix/nemotron-bubble.git
+cd nemotron-bubble
 
-# Regenerate the README art in docs\ (bubble.png, demo.gif and one image per settings tab:
-# settings-history.png, settings-model.png, settings-settings.png)
+# Build the app
+cargo build --release
+
+# Build it
+cargo run --release
+
+# Regenerate the README art in docs\ (bubble.png, demo.gif and one image per tab of the application window: window-history.png, window-model.png, window-settings.png)
 cargo run --release --features assets -- --render-assets docs
 
 # Regenerate the exe icon (embedded by build.rs together with the version info)

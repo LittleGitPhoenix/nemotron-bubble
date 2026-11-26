@@ -125,10 +125,10 @@ fn any_download_busy(app: &Arc<AppState>) -> bool {
         .any(ModelDownloadState::busy)
 }
 
-/// Repaint the settings window (safe from any thread).
+/// Repaint the application window (safe from any thread).
 fn repaint_settings(app: &Arc<AppState>) {
     unsafe {
-        let hwnd = settings_hwnd_from_app(app);
+        let hwnd = application_window_hwnd_from_app(app);
         if hwnd != null_mut() {
             PostMessageW(hwnd, WM_UI_UPDATE, 0, 0);
         }

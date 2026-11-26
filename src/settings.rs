@@ -12,7 +12,9 @@ pub(crate) struct AppSettings {
     pub(crate) paste_final_on_stop: bool,
     pub(crate) sounds_enabled: bool,
     pub(crate) waveform_enabled: bool,
-    pub(crate) bubble_click_opens_settings: bool,
+    /// Called "bubble_click_opens_settings" before 1.0.0, still read under that name.
+    #[serde(alias = "bubble_click_opens_settings")]
+    pub(crate) bubble_click_opens_window: bool,
     pub(crate) show_floating_bubble: bool,
     pub(crate) tray_waveform_enabled: bool,
     pub(crate) enter_stops_recording: bool,
@@ -21,7 +23,7 @@ pub(crate) struct AppSettings {
     pub(crate) hotkey_vk: u32,
     pub(crate) paste_delay_ms: u64,
     pub(crate) history_limit: usize,
-    /// Which speech model to load (chosen in the settings window). When missing
+    /// Which speech model to load (chosen in the application window). When missing
     /// from settings.json (first start), it is detected; see `detect_model_choice`.
     pub(crate) model: ModelChoice,
     /// Model folder used by the Predefined choice (after NEMOTRON_MODEL_DIR).
@@ -269,7 +271,7 @@ impl Default for AppSettings {
             paste_final_on_stop: true,
             sounds_enabled: true,
             waveform_enabled: true,
-            bubble_click_opens_settings: true,
+            bubble_click_opens_window: true,
             show_floating_bubble: true,
             tray_waveform_enabled: true,
             enter_stops_recording: false,
@@ -340,8 +342,8 @@ pub(crate) fn toggle_setting(app: &Arc<AppState>, id: usize) {
             }
             SETTINGS_TOGGLE_SOUNDS => settings.sounds_enabled = !settings.sounds_enabled,
             SETTINGS_TOGGLE_WAVEFORM => settings.waveform_enabled = !settings.waveform_enabled,
-            SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS => {
-                settings.bubble_click_opens_settings = !settings.bubble_click_opens_settings
+            SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW => {
+                settings.bubble_click_opens_window = !settings.bubble_click_opens_window
             }
             SETTINGS_TOGGLE_FLOATING_BUBBLE => {
                 settings.show_floating_bubble = !settings.show_floating_bubble
@@ -582,5 +584,11 @@ mod tests {
         let restored: AppSettings = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(to_json(&restored), json);
     }
-}
 
+    #[test]
+    fn old_bubble_click_key_is_still_read() {
+        let settings: AppSettings = serde_json::from_str(r#"{ "bubble_click_opens_settings": false }"#).unwrap();
+        assert!(!settings.bubble_click_opens_window);
+        assert!(to_json(&settings).get("bubble_click_opens_settings").is_none());
+    }
+}

@@ -127,7 +127,7 @@ pub(crate) struct UiState {
     pub(crate) status: String,
     pub(crate) transcript: String,
     pub(crate) model_dir: String,
-    /// Short model state for the settings window, e.g. "Loaded: Multilingual".
+    /// Short model state for the application window, e.g. "Loaded: Multilingual".
     pub(crate) model_status: String,
     /// Why no microphone could be opened, None while one is available. The bubble
     /// and the tray icon show it and give the reason in their tooltips.
@@ -142,7 +142,7 @@ pub(crate) struct AppState {
     pub(crate) recording: Arc<AtomicBool>,
     pub(crate) hwnd: AtomicIsize,
     pub(crate) target_hwnd: AtomicIsize,
-    pub(crate) settings_hwnd: AtomicIsize,
+    pub(crate) application_window_hwnd: AtomicIsize,
     /// History list: scroll offset and total content height (px), the clickable
     /// copy icons of the last paint (rect, history index), and the entry whose
     /// icon currently shows the "copied" checkmark.
@@ -151,7 +151,7 @@ pub(crate) struct AppState {
     pub(crate) history_hits: Mutex<Vec<(RectI, usize)>>,
     pub(crate) copied_flash: Mutex<Option<usize>>,
     pub(crate) capturing_hotkey: AtomicBool,
-    /// Active tab of the settings window (TAB_HISTORY / TAB_MODEL / TAB_SETTINGS).
+    /// Active tab of the application window (TAB_HISTORY / TAB_MODEL / TAB_SETTINGS).
     pub(crate) settings_tab: AtomicUsize,
     /// Scroll offset (px) of the Settings tab.
     pub(crate) settings_scroll: AtomicI32,
@@ -244,7 +244,7 @@ pub(crate) fn run_app() -> Result<()> {
         recording: Arc::new(AtomicBool::new(false)),
         hwnd: AtomicIsize::new(0),
         target_hwnd: AtomicIsize::new(0),
-        settings_hwnd: AtomicIsize::new(0),
+        application_window_hwnd: AtomicIsize::new(0),
         history_scroll: AtomicI32::new(0),
         history_content_h: AtomicI32::new(0),
         history_hits: Mutex::new(Vec::new()),
@@ -347,9 +347,9 @@ where
         if hwnd != null_mut() {
             PostMessageW(hwnd, WM_UI_UPDATE, 0, 0);
         }
-        let settings_hwnd = settings_hwnd_from_app(app);
-        if settings_hwnd != null_mut() {
-            PostMessageW(settings_hwnd, WM_UI_UPDATE, 0, 0);
+        let application_window_hwnd = application_window_hwnd_from_app(app);
+        if application_window_hwnd != null_mut() {
+            PostMessageW(application_window_hwnd, WM_UI_UPDATE, 0, 0);
         }
     }
 }
@@ -376,6 +376,6 @@ pub(crate) fn target_hwnd_from_app(app: &Arc<AppState>) -> HWND {
     app.target_hwnd.load(Ordering::SeqCst) as HWND
 }
 
-pub(crate) fn settings_hwnd_from_app(app: &Arc<AppState>) -> HWND {
-    app.settings_hwnd.load(Ordering::SeqCst) as HWND
+pub(crate) fn application_window_hwnd_from_app(app: &Arc<AppState>) -> HWND {
+    app.application_window_hwnd.load(Ordering::SeqCst) as HWND
 }

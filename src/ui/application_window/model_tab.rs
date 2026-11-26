@@ -12,13 +12,13 @@ pub(crate) const DOWNLOAD_ROW_H: i32 = 56;
 pub(crate) const LANGUAGE_ROW_TOP: i32 = DOWNLOAD_ROWS_TOP + DOWNLOADABLE_MODELS.len() as i32 * DOWNLOAD_ROW_H + 12;
 pub(crate) const PRELOAD_ROW_TOP: i32 = LANGUAGE_ROW_TOP + 56;
 
-/// Popup menu under the settings window's Language button.
+/// Popup menu under the application window's Language button.
 pub(crate) unsafe fn show_language_menu(app: &Arc<AppState>) {
     let menu = build_language_menu(&settings_snapshot(app), app.recording.load(Ordering::SeqCst));
-    show_menu_below(app, menu, settings_language_rect());
+    show_menu_below(app, menu, language_rect());
 }
 
-/// The Language menu (settings popup and tray submenu): current one checked,
+/// The Language menu (popup in the application window and tray submenu): current one checked,
 /// everything greyed out while dictating or with the English model selected.
 pub(crate) unsafe fn build_language_menu(settings: &AppSettings, recording: bool) -> HMENU {
     let menu = CreatePopupMenu();
@@ -46,53 +46,53 @@ pub(crate) unsafe fn build_language_menu(settings: &AppSettings, recording: bool
 }
 
 /// Background track of the Processing (CPU / GPU / Auto) segmented control.
-pub(crate) fn settings_compute_track_rect() -> RectI {
+pub(crate) fn compute_track_rect() -> RectI {
     section_track_rect(COMPUTE_SECTION_TOP)
 }
 
 /// One segment of the Processing control.
-pub(crate) fn settings_compute_rect(choice: ComputeChoice) -> RectI {
+pub(crate) fn compute_rect(choice: ComputeChoice) -> RectI {
     let index = ComputeChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0);
-    segment_rect(settings_compute_track_rect(), index, ComputeChoice::ALL.len())
+    segment_rect(compute_track_rect(), index, ComputeChoice::ALL.len())
 }
 
 /// Background track of the speech-model segmented control.
-pub(crate) fn settings_model_track_rect() -> RectI {
+pub(crate) fn model_track_rect() -> RectI {
     section_track_rect(MODEL_SECTION_TOP)
 }
 
 /// One segment (English / Multilingual / Predefined) of the speech-model control.
-pub(crate) fn settings_model_rect(choice: ModelChoice) -> RectI {
+pub(crate) fn model_rect(choice: ModelChoice) -> RectI {
     let index = ModelChoice::ALL.iter().position(|c| *c == choice).unwrap_or(0);
-    segment_rect(settings_model_track_rect(), index, ModelChoice::ALL.len())
+    segment_rect(model_track_rect(), index, ModelChoice::ALL.len())
 }
 
 /// The Language button (opens the language popup menu), right of its label.
-pub(crate) fn settings_language_rect() -> RectI {
+pub(crate) fn language_rect() -> RectI {
     RectI {
-        left: SETTINGS_INNER_RIGHT - 140,
+        left: WINDOW_INNER_RIGHT - 140,
         top: LANGUAGE_ROW_TOP + 4,
-        right: SETTINGS_INNER_RIGHT,
+        right: WINDOW_INNER_RIGHT,
         bottom: LANGUAGE_ROW_TOP + 36,
     }
 }
 
 pub(crate) fn handle_model_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
     for choice in ModelChoice::ALL {
-        if settings_model_rect(choice).contains(x, y) {
+        if model_rect(choice).contains(x, y) {
             select_model(app, choice);
             return;
         }
     }
 
     for choice in ComputeChoice::ALL {
-        if settings_compute_rect(choice).contains(x, y) {
+        if compute_rect(choice).contains(x, y) {
             select_compute(app, choice);
             return;
         }
     }
 
-    if settings_language_rect().contains(x, y) {
+    if language_rect().contains(x, y) {
         if language_selectable(&settings_snapshot(app)) {
             unsafe { show_language_menu(app) };
         } else {
@@ -107,7 +107,7 @@ pub(crate) fn handle_model_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
         return;
     }
 
-    if settings_toggle_rect(SETTINGS_TOGGLE_PRELOAD).contains(x, y) {
+    if toggle_rect(SETTINGS_TOGGLE_PRELOAD).contains(x, y) {
         toggle_setting(app, SETTINGS_TOGGLE_PRELOAD);
     }
 }
@@ -115,17 +115,17 @@ pub(crate) fn handle_model_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
 
 /// Pass 1 of the Model tab: segmented controls, Downloads, dividers, Language button, Preload switch.
 pub(crate) fn draw_model_shapes(buf: &mut [u32], cw: i32, ch: i32, settings: &AppSettings, downloads: &[ModelDownloadState]) {
-    draw_segment_track(buf, cw, ch, settings_compute_track_rect());
-    draw_button_bg(buf, cw, ch, settings_compute_rect(settings.compute), true);
+    draw_segment_track(buf, cw, ch, compute_track_rect());
+    draw_button_bg(buf, cw, ch, compute_rect(settings.compute), true);
     draw_divider(buf, cw, ch, MODEL_SECTION_TOP - 12);
-    draw_segment_track(buf, cw, ch, settings_model_track_rect());
-    draw_button_bg(buf, cw, ch, settings_model_rect(settings.model), true);
+    draw_segment_track(buf, cw, ch, model_track_rect());
+    draw_button_bg(buf, cw, ch, model_rect(settings.model), true);
     draw_divider(buf, cw, ch, DOWNLOADS_SECTION_TOP - 12);
     draw_downloads_shapes(buf, cw, ch, downloads);
     draw_divider(buf, cw, ch, LANGUAGE_ROW_TOP - 12);
-    draw_button_bg(buf, cw, ch, settings_language_rect(), false);
+    draw_button_bg(buf, cw, ch, language_rect(), false);
     draw_divider(buf, cw, ch, PRELOAD_ROW_TOP - 8);
-    draw_toggle(buf, cw, ch, settings_toggle_rect(SETTINGS_TOGGLE_PRELOAD), settings.preload_model);
+    draw_toggle(buf, cw, ch, toggle_rect(SETTINGS_TOGGLE_PRELOAD), settings.preload_model);
 }
 
 /// Pass 2 of the Model tab: section headings, segment labels, Downloads, Language and Preload texts.
@@ -150,7 +150,7 @@ pub(crate) unsafe fn draw_model_text(
         } else {
             SetTextColor(dc, rgb(184, 192, 205));
         }
-        text_center(dc, choice.label(), settings_compute_rect(choice));
+        text_center(dc, choice.label(), compute_rect(choice));
     }
 
     // Speech model (detail line: what is loaded, and where)
@@ -164,7 +164,7 @@ pub(crate) unsafe fn draw_model_text(
         } else {
             SetTextColor(dc, rgb(184, 192, 205));
         }
-        text_center(dc, choice.label(), settings_model_rect(choice));
+        text_center(dc, choice.label(), model_rect(choice));
     }
 
     draw_downloads_text(dc, downloads);
@@ -172,10 +172,10 @@ pub(crate) unsafe fn draw_model_text(
     // Language: label + detail on the left, popup button on the right
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Language", SETTINGS_INNER_LEFT, LANGUAGE_ROW_TOP + 1, 150, 20);
+    text_left(dc, "Language", WINDOW_INNER_LEFT, LANGUAGE_ROW_TOP + 1, 150, 20);
     SelectObject(dc, small_font() as _);
     SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, "Multilingual model only.", SETTINGS_INNER_LEFT, LANGUAGE_ROW_TOP + 21, 160, 18);
+    text_left(dc, "Multilingual model only.", WINDOW_INNER_LEFT, LANGUAGE_ROW_TOP + 21, 160, 18);
     SelectObject(dc, ui_font() as _);
     if language_selectable(settings) {
         SetTextColor(dc, rgb(245, 248, 252));
@@ -185,21 +185,21 @@ pub(crate) unsafe fn draw_model_text(
     text_center(
         dc,
         &format!("{}  \u{25BE}", language_label(&settings.language)),
-        settings_language_rect(),
+        language_rect(),
     );
 
     // Preload toggle
     if let Some(row) = rows.iter().find(|row| row.id == SETTINGS_TOGGLE_PRELOAD) {
-        draw_toggle_text(dc, row, settings_toggle_rect(row.id));
+        draw_toggle_text(dc, row, toggle_rect(row.id));
     }
 }
 
 /// The "Check for updates" button at the right of the Downloads heading.
-pub(crate) fn settings_check_updates_rect() -> RectI {
+pub(crate) fn check_updates_rect() -> RectI {
     RectI {
-        left: SETTINGS_INNER_RIGHT - 150,
+        left: WINDOW_INNER_RIGHT - 150,
         top: DOWNLOADS_SECTION_TOP + 4,
-        right: SETTINGS_INNER_RIGHT,
+        right: WINDOW_INNER_RIGHT,
         bottom: DOWNLOADS_SECTION_TOP + 36,
     }
 }
@@ -210,12 +210,12 @@ fn download_row_top(index: usize) -> i32 {
 }
 
 /// The action button (Download, Update, Resume, Retry, Cancel) at the right of a Downloads row.
-pub(crate) fn settings_download_button_rect(index: usize) -> RectI {
+pub(crate) fn download_button_rect(index: usize) -> RectI {
     let top = download_row_top(index);
     RectI {
-        left: SETTINGS_INNER_RIGHT - 100,
+        left: WINDOW_INNER_RIGHT - 100,
         top: top + 4,
-        right: SETTINGS_INNER_RIGHT,
+        right: WINDOW_INNER_RIGHT,
         bottom: top + 36,
     }
 }
@@ -224,9 +224,9 @@ pub(crate) fn settings_download_button_rect(index: usize) -> RectI {
 fn download_progress_rect(index: usize) -> RectI {
     let top = download_row_top(index) + 42;
     RectI {
-        left: SETTINGS_INNER_LEFT,
+        left: WINDOW_INNER_LEFT,
         top,
-        right: SETTINGS_INNER_RIGHT,
+        right: WINDOW_INNER_RIGHT,
         bottom: top + 4,
     }
 }
@@ -328,14 +328,14 @@ fn download_row_view(state: &ModelDownloadState) -> DownloadRowView {
 fn handle_downloads_click(app: &Arc<AppState>, x: i32, y: i32) -> bool {
     let downloads = downloads_snapshot(app);
     let busy = downloads.iter().any(ModelDownloadState::busy);
-    if settings_check_updates_rect().contains(x, y) {
+    if check_updates_rect().contains(x, y) {
         if !busy {
             check_for_model_updates(app);
         }
         return true;
     }
     for (index, state) in downloads.iter().enumerate() {
-        if !settings_download_button_rect(index).contains(x, y) {
+        if !download_button_rect(index).contains(x, y) {
             continue;
         }
         let choice = DOWNLOADABLE_MODELS[index];
@@ -354,11 +354,11 @@ fn handle_downloads_click(app: &Arc<AppState>, x: i32, y: i32) -> bool {
 
 /// Pass 1 of the Downloads section: Check button, row buttons, progress bars.
 fn draw_downloads_shapes(buf: &mut [u32], cw: i32, ch: i32, downloads: &[ModelDownloadState]) {
-    draw_button_bg(buf, cw, ch, settings_check_updates_rect(), false);
+    draw_button_bg(buf, cw, ch, check_updates_rect(), false);
     for (index, state) in downloads.iter().enumerate() {
         let view = download_row_view(state);
         if let Some(label) = view.button {
-            draw_button_bg(buf, cw, ch, settings_download_button_rect(index), label != "Cancel");
+            draw_button_bg(buf, cw, ch, download_button_rect(index), label != "Cancel");
         }
         if let Some(progress) = view.progress {
             let bar = download_progress_rect(index);
@@ -375,29 +375,29 @@ fn draw_downloads_shapes(buf: &mut [u32], cw: i32, ch: i32, downloads: &[ModelDo
 unsafe fn draw_downloads_text(dc: HDC, downloads: &[ModelDownloadState]) {
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Downloads", SETTINGS_INNER_LEFT, DOWNLOADS_SECTION_TOP + 1, 150, 20);
+    text_left(dc, "Downloads", WINDOW_INNER_LEFT, DOWNLOADS_SECTION_TOP + 1, 150, 20);
     SelectObject(dc, small_font() as _);
     SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, "From Hugging Face.", SETTINGS_INNER_LEFT, DOWNLOADS_SECTION_TOP + 21, 160, 18);
+    text_left(dc, "From Hugging Face.", WINDOW_INNER_LEFT, DOWNLOADS_SECTION_TOP + 21, 160, 18);
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(245, 248, 252));
-    text_center(dc, "Check for updates", settings_check_updates_rect());
+    text_center(dc, "Check for updates", check_updates_rect());
 
     for (index, state) in downloads.iter().enumerate() {
         let view = download_row_view(state);
         let top = download_row_top(index);
-        let button = settings_download_button_rect(index);
-        let text_right = if view.button.is_some() { button.left - 10 } else { SETTINGS_INNER_RIGHT };
+        let button = download_button_rect(index);
+        let text_right = if view.button.is_some() { button.left - 10 } else { WINDOW_INNER_RIGHT };
         SelectObject(dc, ui_font() as _);
         SetTextColor(dc, rgb(233, 238, 244));
-        text_left(dc, DOWNLOADABLE_MODELS[index].label(), SETTINGS_INNER_LEFT, top + 1, 200, 20);
+        text_left(dc, DOWNLOADABLE_MODELS[index].label(), WINDOW_INNER_LEFT, top + 1, 200, 20);
         SelectObject(dc, small_font() as _);
         SetTextColor(dc, rgb(view.color.0, view.color.1, view.color.2));
         text_left_ellipsis(
             dc,
             &view.detail,
             RectI {
-                left: SETTINGS_INNER_LEFT,
+                left: WINDOW_INNER_LEFT,
                 top: top + 21,
                 right: text_right,
                 bottom: top + 39,

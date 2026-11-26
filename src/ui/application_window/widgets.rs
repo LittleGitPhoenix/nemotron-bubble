@@ -4,13 +4,13 @@ use crate::*;
 
 /// Title and detail line of a Model-tab section (its control sits below them).
 pub(crate) unsafe fn section_heading(dc: HDC, top: i32, title: &str, detail: &str) {
-    let width = SETTINGS_INNER_RIGHT - SETTINGS_INNER_LEFT;
+    let width = WINDOW_INNER_RIGHT - WINDOW_INNER_LEFT;
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, title, SETTINGS_INNER_LEFT, top, width, 20);
+    text_left(dc, title, WINDOW_INNER_LEFT, top, width, 20);
     SelectObject(dc, small_font() as _);
     SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, detail, SETTINGS_INNER_LEFT, top + 20, width, 18);
+    text_left(dc, detail, WINDOW_INNER_LEFT, top + 20, width, 18);
 }
 
 /// Title and detail text of a toggle row at `rect` (the switch itself is drawn in pass 1).
@@ -42,12 +42,12 @@ pub(crate) fn draw_segment_track(buf: &mut [u32], cw: i32, ch: i32, track: RectI
 
 /// Thin horizontal line between sections of a tab.
 pub(crate) fn draw_divider(buf: &mut [u32], cw: i32, ch: i32, y: i32) {
-    let width = (SETTINGS_INNER_RIGHT - SETTINGS_INNER_LEFT) as f32;
+    let width = (WINDOW_INNER_RIGHT - WINDOW_INNER_LEFT) as f32;
     fill_round_rect(
         buf,
         cw,
         ch,
-        SETTINGS_INNER_LEFT as f32,
+        WINDOW_INNER_LEFT as f32,
         y as f32,
         width,
         1.0,
@@ -96,9 +96,9 @@ pub(crate) fn draw_button_bg(buf: &mut [u32], cw: i32, ch: i32, rect: RectI, pri
 /// A full-width segmented-control track below a section's title and detail line.
 pub(crate) fn section_track_rect(section_top: i32) -> RectI {
     RectI {
-        left: SETTINGS_INNER_LEFT,
+        left: WINDOW_INNER_LEFT,
         top: section_top + 44,
-        right: SETTINGS_INNER_RIGHT,
+        right: WINDOW_INNER_RIGHT,
         bottom: section_top + 76,
     }
 }

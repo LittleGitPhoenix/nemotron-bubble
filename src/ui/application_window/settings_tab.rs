@@ -4,13 +4,13 @@
 use crate::*;
 
 // Layout in content coordinates, which equal window coordinates at scroll offset 0.
-pub(crate) const MICROPHONE_SECTION_TOP: i32 = SETTINGS_CARD_TOP + 62;
+pub(crate) const MICROPHONE_SECTION_TOP: i32 = WINDOW_CARD_TOP + 62;
 pub(crate) const SETTINGS_TAB_TOGGLES_TOP: i32 = MICROPHONE_SECTION_TOP + 94;
 // The bubble position row follows the last toggle.
 pub(crate) const BUBBLE_POSITION_ROW_TOP: i32 = SETTINGS_TAB_TOGGLES_TOP + SETTINGS_TAB_TOGGLES.len() as i32 * 49;
 // The visible part of the tab is the card. The rest is reached by scrolling.
-pub(crate) const SETTINGS_VIEW_TOP: i32 = SETTINGS_CARD_TOP;
-pub(crate) const SETTINGS_VIEW_BOTTOM: i32 = SETTINGS_HEIGHT - SETTINGS_FOOTER_H;
+pub(crate) const SETTINGS_VIEW_TOP: i32 = WINDOW_CARD_TOP;
+pub(crate) const SETTINGS_VIEW_BOTTOM: i32 = WINDOW_HEIGHT - WINDOW_FOOTER_H;
 // Bottom of the content: the bubble position button plus the card's padding.
 pub(crate) const SETTINGS_CONTENT_BOTTOM: i32 = BUBBLE_POSITION_ROW_TOP + 38 + 12;
 pub(crate) const SETTINGS_MAX_SCROLL: i32 = if SETTINGS_CONTENT_BOTTOM > SETTINGS_VIEW_BOTTOM {
@@ -38,7 +38,7 @@ pub(crate) fn scroll_settings_tab(app: &Arc<AppState>, delta: i32) {
     if new != old {
         app.settings_scroll.store(new, Ordering::SeqCst);
         unsafe {
-            let hwnd = settings_hwnd_from_app(app);
+            let hwnd = application_window_hwnd_from_app(app);
             if hwnd != null_mut() {
                 InvalidateRect(hwnd, null(), 0);
             }
@@ -114,10 +114,10 @@ pub(crate) unsafe fn show_microphone_menu(app: &Arc<AppState>) {
 /// The clickable shortcut-rebind button at the top of the Settings tab.
 pub(crate) fn settings_shortcut_rect() -> RectI {
     RectI {
-        left: SETTINGS_INNER_RIGHT - 150,
-        top: SETTINGS_CARD_TOP + 12,
-        right: SETTINGS_INNER_RIGHT,
-        bottom: SETTINGS_CARD_TOP + 46,
+        left: WINDOW_INNER_RIGHT - 150,
+        top: WINDOW_CARD_TOP + 12,
+        right: WINDOW_INNER_RIGHT,
+        bottom: WINDOW_CARD_TOP + 46,
     }
 }
 
@@ -139,15 +139,15 @@ pub(crate) const SETTINGS_TAB_TOGGLES: [usize; 11] = [
     SETTINGS_TOGGLE_ENTER_STOPS,
     SETTINGS_TOGGLE_SILENCE_STOP,
     SETTINGS_TOGGLE_FLOATING_BUBBLE,
-    SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS,
+    SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW,
 ];
 
 /// The bubble position button (opens the preset popup menu), right of its label.
 pub(crate) fn settings_bubble_position_rect() -> RectI {
     RectI {
-        left: SETTINGS_INNER_RIGHT - 150,
+        left: WINDOW_INNER_RIGHT - 150,
         top: BUBBLE_POSITION_ROW_TOP + 6,
-        right: SETTINGS_INNER_RIGHT,
+        right: WINDOW_INNER_RIGHT,
         bottom: BUBBLE_POSITION_ROW_TOP + 38,
     }
 }
@@ -174,7 +174,7 @@ pub(crate) fn handle_settings_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
         return;
     };
     for id in SETTINGS_TAB_TOGGLES {
-        if settings_toggle_rect(id).contains(x, y) {
+        if toggle_rect(id).contains(x, y) {
             toggle_setting(app, id);
             return;
         }
@@ -210,13 +210,13 @@ pub(crate) fn draw_settings_tab_shapes(
         draw_button_bg(card, cw, view_h, settings_shortcut_rect().shifted(dy), capturing);
         draw_button_bg(card, cw, view_h, settings_microphone_rect().shifted(dy), false);
         for row in rows.iter().filter(|row| row.id != SETTINGS_TOGGLE_PRELOAD) {
-            draw_toggle(card, cw, view_h, settings_toggle_rect(row.id).shifted(dy), row.enabled);
+            draw_toggle(card, cw, view_h, toggle_rect(row.id).shifted(dy), row.enabled);
         }
         draw_button_bg(card, cw, view_h, settings_bubble_position_rect().shifted(dy), false);
     }
     // scrollbar inside the card's padding, on the same line as the History tab's
     let content_h = SETTINGS_CONTENT_BOTTOM - SETTINGS_VIEW_TOP;
-    let track_x = SETTINGS_INNER_RIGHT + 4;
+    let track_x = WINDOW_INNER_RIGHT + 4;
     draw_scrollbar(buf, cw, ch, track_x, SETTINGS_VIEW_TOP + 12, view_h - 24, content_h - 24, view.scroll);
 }
 
@@ -230,15 +230,15 @@ pub(crate) unsafe fn draw_settings_tab_text(
     capturing: bool,
 ) {
     let dy = -view.scroll;
-    IntersectClipRect(dc, SETTINGS_CARD_LEFT, SETTINGS_VIEW_TOP, SETTINGS_WIDTH - SETTINGS_CARD_LEFT, SETTINGS_VIEW_BOTTOM);
+    IntersectClipRect(dc, WINDOW_CARD_LEFT, SETTINGS_VIEW_TOP, WINDOW_WIDTH - WINDOW_CARD_LEFT, SETTINGS_VIEW_BOTTOM);
 
     // shortcut row
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Global shortcut", 40, SETTINGS_CARD_TOP + 13 + dy, 160, 20);
+    text_left(dc, "Global shortcut", 40, WINDOW_CARD_TOP + 13 + dy, 160, 20);
     SelectObject(dc, small_font() as _);
     SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, "Click, then press your keys.", 40, SETTINGS_CARD_TOP + 33 + dy, 160, 18);
+    text_left(dc, "Click, then press your keys.", 40, WINDOW_CARD_TOP + 33 + dy, 160, 18);
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(245, 248, 252));
     let shortcut_label = if capturing {
@@ -277,7 +277,7 @@ pub(crate) unsafe fn draw_settings_tab_text(
     );
 
     for row in rows.iter().filter(|row| row.id != SETTINGS_TOGGLE_PRELOAD) {
-        draw_toggle_text(dc, row, settings_toggle_rect(row.id).shifted(dy));
+        draw_toggle_text(dc, row, toggle_rect(row.id).shifted(dy));
     }
 
     // bubble position: label + detail on the left, popup button on the right
