@@ -2,7 +2,7 @@
 
 **A tiny, beautiful push-to-talk dictation bubble for Windows.**
 
-Press your shortcut, speak, and your words appear at the cursor. Speech recognition runs **on-device** with NVIDIA Nemotron.
+Press shortcut, speak, and your words appear at the cursor. Speech recognition runs **on-device** with NVIDIA Nemotron.
 
 <img src="docs/demo.gif" width="460" alt="Nemotron Bubble live waveform" />
 
@@ -10,28 +10,10 @@ Press your shortcut, speak, and your words appear at the cursor. Speech recognit
 
 ___
 
-## What's new in this fork
-
-This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike/nemotron-bubble). It keeps the original idea of a tiny, private dictation bubble and builds on it with the following changes:
-
-| Change | Description |
-| --- | --- |
-| **Redesigned application window** | A compact window with three tabs (*History*, *Model*, *Settings*) that opens right next to the bubble or the tray icon. Each history entry has a copy icon and shows how fast it was processed. |
-| **Multilingual model fixed** | The multilingual Nemotron model crashed while loading and left the app without speech recognition. It now loads reliably and can be selected next to the English model. |
-| **Bubble position presets** | Place the floating bubble in one of six positions (top or bottom, each left, center or right). The choice is saved. |
-| **Microphone selection** | Choose the input device in the app instead of in the Windows settings. *Windows default* follows a change of the Windows default device without restarting the app. |
-| **Model downloads in the app** | Download, resume and update both models on the *Model* tab instead of with a PowerShell script. Every file is verified with SHA-256, and the date of the model version is shown. |
-| **GPU support** | Run the model on the GPU via DirectML, which works with any DirectX 12 graphics adapter, or stay on the CPU. *Auto* tries the GPU first. |
-| **Language selection** | Tell the multilingual model which language you speak instead of letting it guess. 15 languages are offered, and NVIDIA rates this as more accurate than auto-detection. |
-| **Microphone status at a glance** | Without a microphone the app keeps running instead of quitting. The bubble shows an amber dot and a crossed-out microphone, the tray icon is crossed out, and both tell the reason on hover. A microphone that is connected later is picked up automatically. |
-| **Close from the bubble** | A ✕ appears on the bubble's top-right edge while the mouse is over it and quits the app, so the tray menu is no longer the only way out. |
-| **Clear error feedback** | A model that fails to load shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
-| **Portable** | Settings, history and logs are stored next to the exe instead of in `%APPDATA%`. |
-| **App icon and version** | The exe has its own icon, and the version is shown in the application window, the tray menu and the file properties. |
-
-___
-
 ## Features
+
+<details>
+<summary>Show all features</summary>
 
 | Feature | Description |
 | --- | --- |
@@ -49,32 +31,33 @@ ___
 | **Portable** | Settings, history and logs live next to the exe. |
 | **Everything toggleable** | Start with Windows, soft sound cues, model preloading and more. |
 
+</details>
+
 ___
 
-## The application window
+## What's new in this fork
 
-Click the bubble or the tray icon to open it. It appears next to whatever you clicked. Three tabs keep it compact:
+This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike/nemotron-bubble). It keeps the original idea of a tiny, private dictation bubble and builds on it with the following changes:
 
-<table>
-  <tr>
-    <th width="33%">History</th>
-    <th width="33%">Model</th>
-    <th width="33%">Settings</th>
-  </tr>
-  <tr>
-    <td><img src="docs/window-history.png" width="260" alt="History tab" /></td>
-    <td><img src="docs/window-model.png" width="260" alt="Model tab" /></td>
-    <td><img src="docs/window-settings.png" width="260" alt="Settings tab" /></td>
-  </tr>
-  <tr>
-    <td valign="top">Recent dictations, newest first. The icon in front of each entry copies its text. The grey line shows when it was dictated, on which device, and the processing time per audio chunk. The trash bin clears the history.</td>
-    <td valign="top">Where the model runs (<b>Processing</b>), which model is loaded (<b>Speech model</b>, with what is loaded right now underneath), the model <b>Downloads</b> with their version and update check, the spoken <b>Language</b> for the multilingual model, and <b>Preload Nemotron</b>.</td>
-    <td valign="top">The global shortcut, the <b>Microphone</b>, how text is inserted, sounds and animations, the silence auto-stop, and the floating bubble: whether it is shown, what a click on it does, and its <b>Bubble position</b>. The tab scrolls with the mouse wheel.</td>
-  </tr>
-</table>
-> [!NOTE]
->
-> The ✕ at the top right hides the window again and the app keeps running in the tray. Speech model, language and processing are also in the tray icon's right-click menu.
+<details>
+<summary>Show all changes</summary>
+
+| Change | Description |
+| --- | --- |
+| **Redesigned application window** | A compact window with three tabs (*History*, *Model*, *Settings*) that opens right next to the bubble or the tray icon. Each history entry has a copy icon and shows how fast it was processed. |
+| **Multilingual model fixed** | The multilingual Nemotron model crashed while loading and left the app without speech recognition. It now loads reliably and can be selected next to the English model. |
+| **Bubble position presets** | Place the floating bubble in one of six positions (top or bottom, each left, center or right). The choice is saved. |
+| **Microphone selection** | Choose the input device in the app instead of in the Windows settings. *Windows default* follows a change of the Windows default device without restarting the app. |
+| **Model downloads in the app** | Download, resume and update both models on the *Model* tab instead of with a PowerShell script. Every file is verified with SHA-256, and the date of the model version is shown. |
+| **GPU support** | Run the model on the GPU via DirectML, which works with any DirectX 12 graphics adapter, or stay on the CPU. *Auto* tries the GPU first. |
+| **Language selection** | Tell the multilingual model which language you speak instead of letting it guess. 15 languages are offered, and NVIDIA rates this as more accurate than auto-detection. |
+| **Microphone status at a glance** | Without a microphone the app keeps running instead of quitting. The bubble shows an amber dot and a crossed-out microphone, the tray icon is crossed out, and both tell the reason on hover. A microphone that is connected later is picked up automatically. |
+| **Close from the bubble** | A ✕ appears on the bubble's top-right edge while the mouse is over it and quits the app, so the tray menu is no longer the only way out. |
+| **Clear error feedback** | A model that fails to load shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
+| **Portable** | Settings, history and logs are stored next to the exe instead of in `%APPDATA%`. |
+| **App icon and version** | The exe has its own icon, and the version is shown in the application window, the tray menu and the file properties. |
+
+</details>
 
 ___
 
@@ -84,45 +67,59 @@ ___
 - A **microphone**.
 - **About 2.5 GB free disk** per speech model (downloaded once, from the app).
 - **~3 GB of free RAM** while dictating, because the model runs entirely in memory.
-- To build from source: the [Rust toolchain](https://rustup.rs) (MSVC).
 
 > [!NOTE]
 >
 > The Nemotron model has ~0.6B parameters and uses roughly **2.5 to 3 GB of RAM** while loaded. With *Preload Nemotron* enabled (default) that memory is held so the first dictation is instant. Turn it off to keep RAM free when idle. The model then loads on first use instead.
+
 ___
 
 ## Quick start
 
-Download a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page.
+Download a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page and extract it into a folder of your choice.
 
-On the first start no speech model is installed yet. Open the application window, go to the *Model* tab and click **Download** next to either **_English_** or **_Multilingual_** (about 2.5 GB each). The app downloads the files from Hugging Face into `models\` next to the exe, verifies them and loads the model. You can also point at a custom folder with `$env:NEMOTRON_MODEL_DIR = "C:\path\to\nemotron"`.
+On the first start no speech model is installed yet. Open the application window, go to the *Model* tab and click **Download** next to either **_English_** or **_Multilingual_** (about 2.5 GB each). The app downloads the files from Hugging Face into `models\` next to the exe, verifies them and loads the model.
 
-### Downloads and updates
+___
 
-| Element | Meaning |
-| --- | --- |
-| **Download** / **Resume** | Downloads a model. A cancelled or interrupted download resumes where it stopped. Every file is checked against the SHA-256 that Hugging Face publishes before it is used. |
-| **Version** | The date of the last upstream change of the model files, e.g. *2026-10-22*. Hugging Face has no version numbers for these exports. |
-| **Check for updates** | Asks Hugging Face for the current files and compares them with yours. Models downloaded by other means are hashed once for that (a few seconds). The app never contacts Hugging Face on its own. |
-| **Update** | Downloads only the files that changed and swaps them in. A loaded model is reloaded afterwards. The previous version is kept as a backup folder next to it, e.g. `models\nemotron_2026-10-22`. To go back, point *Predefined* at that folder or rename the folders. A backup takes the size of the files that changed, usually about 2.5 GB. Unchanged files are shared with the model folder via hard links. Delete backups by hand when they are no longer needed. |
 
-The version and the file hashes are kept in `model-info.json` inside each model folder.
 
-### Choosing the model
+## The application window
 
-Pick the model under **Speech model** on the *Model* tab (or in the tray menu):
+Click the bubble or the tray icon to open it. It appears next to whatever you clicked. Three tabs keep it compact:
 
-| Choice | Loads |
-| --- | --- |
-| **English** | `models\nemotron` |
-| **Multilingual** | `models\nemotron_multi`, which detects the spoken language automatically |
-| **Predefined** | the folder in `NEMOTRON_MODEL_DIR`, otherwise `"model_dir"` from `config\settings.json` |
+> [!NOTE]
+>
+> The ✕ at the top right hides the window again and the app keeps running in the tray. Speech model, language and processing are also in the tray icon's right-click menu.
 
-`models\` is searched in the working directory, next to the exe and up to four parent folders. On first start the choice is detected: **Predefined** if one of its folders is set, otherwise **English** if installed, otherwise **Multilingual**. Switching unloads the old model first. With *Preload Nemotron* on, the new one loads right away. The line under *Speech model* shows what is loaded, as reported by the model itself.
+<table>
+  <tr>
+    <th width="33%"><a href="#history">History</a></th>
+    <th width="33%"><a href="#model">Model</a></th>
+    <th width="33%"><a href="#settings">Settings</a></th>
+  </tr>
+  <tr>
+    <td><img src="docs/window-history.png" width="260" alt="History tab" /></td>
+    <td><img src="docs/window-model.png" width="260" alt="Model tab" /></td>
+    <td><img src="docs/window-settings.png" width="260" alt="Settings tab" /></td>
+  </tr>
+</table>
 
-### Processing (GPU or CPU)
 
-Under **Processing** on the *Model* tab (or in the tray menu) choose where the model runs:
+
+### History
+
+Recent dictations, newest first. The icon in front of each entry copies its text to the clipboard. The grey line above the text shows when it was dictated, on which device (CPU or GPU) it was processed, and the processing time per audio chunk. The list scrolls with the mouse wheel. The trash bin clears the whole history.
+
+
+
+### Model
+
+In this tab **Nemotron** speech model download and configuration can be managed.
+
+#### Processing (GPU or CPU)
+
+Under **Processing** (also in the tray menu) choose where the model runs:
 
 | Choice | Runs on |
 | --- | --- |
@@ -130,13 +127,81 @@ Under **Processing** on the *Model* tab (or in the tray menu) choose where the m
 | **GPU** | DirectML, which works with any DirectX 12 graphics adapter including integrated ones |
 | **Auto** | the GPU if possible, otherwise the CPU |
 
-Switching reloads the model. The line under *Speech model* shows the device in use. Each entry in the recent dictations (and in `config\history.json`) records the device and the average processing time per 560 ms audio chunk, so you can compare both on your machine. An integrated GPU is not necessarily faster than the CPU. `--self-test` prints the same measurement.
+Switching reloads the model. The line under *Speech model* shows the device in use. Each entry on the *History* tab shows the device and the processing time, so you can compare both on your machine. An integrated GPU is not necessarily faster than the CPU.
 
-### Language (multilingual model)
+#### Speech model
 
-By default the multilingual model works out the spoken language itself. If you know the language, set it under **Language** on the *Model* tab or in the tray menu. NVIDIA's documentation says this is more accurate than auto-detection. The choice applies instantly, without reloading the model. Offered are *Auto-detect* plus the 15 languages NVIDIA rates transcription-ready: Arabic, Dutch, English, French, German, Hindi, Italian, Japanese, Korean, Portuguese, Russian, Spanish, Turkish, Ukrainian, Vietnamese. With the English model selected the setting is greyed out.
+Pick the model under **Speech model** (also in the tray menu):
 
-### Portable layout
+| Choice | Loads |
+| --- | --- |
+| **English** | the English model |
+| **Multilingual** | the multilingual model, which detects the spoken language automatically |
+| **Predefined** | a model folder of your own (see [README_Technical.md](README_Technical.md#model-location)) |
+
+The line under *Speech model* shows what is loaded, as reported by the model itself.
+
+#### Downloads and updates
+
+| Element | Meaning |
+| --- | --- |
+| **Download** / **Resume** | Downloads a model. A cancelled or interrupted download resumes where it stopped. Every file is checked against the SHA-256 that Hugging Face publishes before it is used. |
+| **Version** | The date of the last upstream change of the model files, e.g. *2026-10-22*. Hugging Face has no version numbers for these exports. |
+| **Check for updates** | Asks Hugging Face for the current files and compares them with yours. The app never contacts Hugging Face on its own. |
+| **Update** | Downloads only the files that changed and swaps them in. A loaded model is reloaded afterwards. The previous version is kept as a backup folder next to it, e.g. `models\nemotron_2026-10-22`. Delete backups by hand when they are no longer needed. |
+
+#### Language (multilingual model)
+
+By default the multilingual model infers the spoken language itself. If you know the language, set it under **Language** (also in the tray menu). NVIDIA's documentation says this is more accurate than auto-detection. The choice applies instantly, without reloading the model. Offered are *Auto-detect* plus the 15 languages NVIDIA rates transcription-ready: Arabic, Dutch, English, French, German, Hindi, Italian, Japanese, Korean, Portuguese, Russian, Spanish, Turkish, Ukrainian, Vietnamese.
+
+> [!NOTE]
+>
+> With the English model selected the setting is greyed out.
+
+#### Preload Nemotron
+
+On by default. The model is loaded at startup and kept in memory, so the first dictation starts right away. Turn it off to keep about 2.5 GB of RAM free while you are not dictating. The model then loads when you start the first dictation.
+
+
+
+### Settings
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `Global shortcut` | Click it and press the new combo (Ctrl / Alt / Shift + key). | `Ctrl+Space` |
+| `Microphone` | The input device. *Windows default* follows the Windows sound settings, even while the app runs. | Windows default |
+| `Start with Windows` | Starts the app after sign-in. | Off |
+| `Type live into cursor` | Types the words while you speak. Use it in real text editors only. Off is safer. | Off |
+| `Copy final to clipboard` | Copies the full transcript once when the dictation stops. | On |
+| `Paste final on stop` | Pastes the transcript once when the dictation stops. | On |
+| `Soft sound cues` | Short, quiet chimes at start and stop. | On |
+| `Waveform animation` | Shows the live microphone level in the bubble while recording. | On |
+| `Animate the tray icon` | Lets the tray icon pulse while you speak. | On |
+| `Enter stops recording` | Pressing Enter finishes the dictation and submits the text. | Off |
+| `Auto-stop on silence` | Stops the dictation after 15 s without speech. Turn it off to pause freely. | On |
+| `Show floating bubble` | Off keeps the app in the tray only. | On |
+| `Bubble click opens window` | Off makes a click on the bubble start and stop the dictation instead. | On |
+| `Bubble position` | One of six presets: top or bottom, each left, center or right. | Bottom right |
+
+
+
+### Tray menu
+
+Right-click the tray icon to open it.
+
+| Entry | Meaning |
+| --- | --- |
+| **Start** / **Stop** | Starts or stops the dictation, like the shortcut. |
+| **Show / Hide Bubble** | Hides or shows the floating bubble until the next start. The *Show floating bubble* setting stays unchanged. |
+| **Speech model** ▸ | The same choice as on the [*Model*](#speech-model) tab. Locked while dictating. |
+| **Language** ▸ | The spoken language for the multilingual model, as on the [*Model*](#language-multilingual-model) tab. |
+| **Processing** ▸ | CPU, GPU or Auto, as on the [*Model*](#processing-gpu-or-cpu) tab. |
+| **Quit** | Quits the app. |
+| Version | The installed version, for information only. |
+
+___
+
+## Portable layout
 
 The app keeps all its files next to the exe, so the folder can be copied or deleted as a whole:
 
@@ -148,9 +213,7 @@ log\       nemotron-bubble.log, crash.log
 models\    nemotron\, nemotron_multi\
 ```
 
-The folder must be writable, so don't put it under `C:\Program Files`. The only thing outside it is the *Start with Windows* entry (`HKCU\...\CurrentVersion\Run\NemotronBubble`), which is off by default. The app removes it again when you turn that setting off, but only if it points to this copy of the exe, so trying out a second copy never unregisters the first one.
-
-The `settings.json` can be edited by hand. It is read with or without a UTF-8 byte order mark (and as UTF-16 with one), so the encoding your editor saves with does not matter.
+The folder must be writable, so don't put it under `C:\Program Files`. The only thing outside it is the *Start with Windows* entry in the registry, which is off by default and removed again when you turn the setting off.
 
 ___
 
@@ -158,105 +221,16 @@ ___
 
 | Topic | What to do |
 | --- | --- |
-| **Log file** | `log\nemotron-bubble.log` (next to the exe) records startup, microphone, model loading (folder, file sizes, mode, load time) and every error. The same lines go to `OutputDebugString`, so [DebugView](https://learn.microsoft.com/sysinternals/downloads/debugview) shows them live (filter on `NemotronBubble`). |
+| **Log file** | `log\nemotron-bubble.log` (next to the exe) records startup, microphone, model loading (folder, file sizes, mode, load time) and every error. |
 | **Self-test** | Run `nemotron-bubble.exe --self-test` from a terminal. It loads the model, runs a few chunks, and prints the device, the processing time per chunk, or the full error. |
 | **No microphone** | The app keeps running. The bubble shows a crossed-out microphone and the tray icon is crossed out, and both tell the reason on hover. The microphone is picked up automatically once it is connected. Starting dictation without one shows a warning. |
 | **Model fails to load** | A dialog shows the reason. An interrupted download is the usual cause: `encoder.onnx.data` must be about 2.5 GB. On the *Model* tab, click **Check for updates**. A damaged file shows up as *Update available*, and **Update** downloads it again. |
 
 ___
 
-## Controls
+## For developers
 
-| Action | How |
-| --- | --- |
-| Start / stop dictation | your shortcut (default `Ctrl+Space`) |
-| Change the shortcut | *Settings* tab → click *Global shortcut*, press the new combo |
-| Choose the microphone | *Settings* tab → *Microphone*. *Windows default* follows the Windows sound settings. |
-| Open / close the application window | click the bubble (opens next to it) **or** the tray icon (opens next to the tray) |
-| Move the bubble | pick a preset under *Settings* tab → *Bubble position* (saved), or drag it (until the next start) |
-| Copy a past dictation | *History* tab → the copy icon in front of the entry |
-| Tray menu (start/stop, show/hide bubble, speech model, language, processing, quit) | right-click the tray icon |
-| Quit | the ✕ that appears on the bubble while the mouse is over it, **or** *Quit* in the tray menu |
-
-___
-
-## How it works
-
-Nemotron Bubble is a Rust app built directly on the Win32 API. There is no Electron and no web view. It ships as one exe with ONNX Runtime linked in, plus `DirectML.dll` for GPU processing. Microphone audio is captured with [`cpal`](https://crates.io/crates/cpal), streamed through the [`parakeet-rs`](https://crates.io/crates/parakeet-rs) Nemotron ONNX model, and injected into the focused window as Unicode keystrokes. The floating bubble is a **per-pixel-alpha layered window** drawn by a small software canvas with signed-distance anti-aliasing, so the pill, shadow, and waveform stay crisp and smooth.
-
-### Source layout
-
-| File | Content |
-| --- | --- |
-| `src/main.rs` | Startup, `--self-test`, the shared application state |
-| `src/settings.rs` | Persisted options, their choice types, loading and saving, file locations |
-| `src/history.rs` | Recent dictations and the state of the History list |
-| `src/model.rs` | Finding, checking and loading the speech model, GPU probing, languages |
-| `src/download.rs` | Model downloads from Hugging Face: update check, resume, SHA-256 verification |
-| `src/engine.rs` | The speech engine thread and recording control |
-| `src/audio.rs` | Microphone selection, capture and resampling to 16 kHz |
-| `src/output.rs` | Clipboard, Ctrl+V and Unicode keystrokes |
-| `src/hotkey.rs` | The global shortcut |
-| `src/sound.rs` | Start and stop sound cues |
-| `src/diagnostics.rs` | Log file, crash logger, message boxes |
-| `src/util.rs` | Small Win32 helpers |
-| `src/assets.rs` | README art and exe icon export (`assets` feature only) |
-| `src/ui/canvas.rs` | Drawing toolkit: canvas, anti-aliased shapes, text, fonts |
-| `src/ui/bubble.rs` | The floating bubble: drawing, animation, placement, dragging |
-| `src/ui/application_window/mod.rs` | The application window frame: header, tab bar, placement, dispatch to the tabs |
-| `src/ui/application_window/history_tab.rs` | The *History* tab |
-| `src/ui/application_window/model_tab.rs` | The *Model* tab |
-| `src/ui/application_window/settings_tab.rs` | The *Settings* tab |
-| `src/ui/application_window/widgets.rs` | Controls shared by the tabs: toggles, buttons, segmented controls, scrollbar |
-| `src/ui/tray.rs` | Tray icon and tray menu |
-| `src/ui/window.rs` | Window class, message loop, message dispatch |
-
-Every module starts with `use crate::*;`, so all items are available in every file.
-
-___
-
-## Build
-
-```powershell
-git clone https://github.com/LittleGitPhoenix/nemotron-bubble.git
-cd nemotron-bubble
-
-# Build the app
-cargo build --release
-
-# Build it
-cargo run --release
-
-# Regenerate the README art in docs\ (bubble.png, demo.gif and one image per tab of the application window: window-history.png, window-model.png, window-settings.png)
-cargo run --release --features assets -- --render-assets docs
-
-# Regenerate the exe icon (embedded by build.rs together with the version info)
-cargo run --release --features assets -- --render-icon assets/nemotron-bubble.ico
-```
-
-### Tests
-
-The unit tests live next to the code they test, in a `#[cfg(test)] mod tests` block at the end of each file. They cover the pure logic: settings and history files, language and choice values, model manifest checks and backups, hashing, resampling, downmixing, the level meter and the Win32 string helpers. The UI, the hotkey, the capture device and typing into other windows are not covered.
-
-```powershell
-cargo test
-```
-
-Two model tests feed the recording in `tests/data/audio-test.wav` ("Hello world, what a wonderful day.") through the same downmix, resampling and dictation code the app uses, once with the English and once with the multilingual model, and check the recognized words. They need both models, so they are marked `#[ignore]`. Point `NEMOTRON_TEST_MODELS` at a `models` folder that contains `nemotron` and `nemotron_multi`, for the test run only:
-
-```powershell
-$env:NEMOTRON_TEST_MODELS = "$PWD\target\release\models"
-cargo test -- --include-ignored
-Remove-Item Env:\NEMOTRON_TEST_MODELS
-```
-
-The app itself never reads `NEMOTRON_TEST_MODELS`.
-
-When cross-compiling from Linux or WSL with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin), the test exe is a Windows program. cargo-xwin starts it through Wine by default. Inside WSL it can run directly on Windows instead:
-
-```bash
-CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER=env cargo xwin test --target x86_64-pc-windows-msvc
-```
+How the app works, the source layout, building from source, the tests and more details on models and settings files are described in [README_Technical.md](README_Technical.md).
 
 ___
 

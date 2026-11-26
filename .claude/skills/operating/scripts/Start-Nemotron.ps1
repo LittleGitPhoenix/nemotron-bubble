@@ -46,7 +46,7 @@ if ($Build)
 	}
 	else
 	{
-		if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'No Rust toolchain (cargo) found and no scripts\build-wsl.ps1. Build the app as the README describes.' }
+		if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'No Rust toolchain (cargo) found and no scripts\build-wsl.ps1. Build the app as README_Technical.md describes.' }
 		Push-Location $script:RepoRoot
 		$output = & cargo build --release 2>&1 | ForEach-Object { "$_" }
 		Pop-Location

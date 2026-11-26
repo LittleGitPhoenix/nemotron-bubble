@@ -5,7 +5,7 @@ description: Start an isolated test copy of Nemotron Bubble, open its applicatio
 
 # Operating Nemotron Bubble
 
-The scripts let a model run a test copy of the app, look at it and click through it. Use them for every UI task: take a baseline screenshot first, make the change, then build, run and verify with a second screenshot. The README describes how to build. Machine-specific build setups (such as a WSL cross-build) may be described in local, untracked files under `.claude/rules/`, read them when they exist.
+The scripts let a model run a test copy of the app, look at it and click through it. Use them for every UI task: take a baseline screenshot first, make the change, then build, run and verify with a second screenshot. README_Technical.md describes how to build. Machine-specific build setups (such as a WSL cross-build) may be described in local, untracked files under `.claude/rules/`, read them when they exist.
 
 All input is posted window messages. The mouse never moves and the scripts never activate a window. The app itself brings its application window and popup menus to the front when they open, which the scripts cannot prevent.
 
