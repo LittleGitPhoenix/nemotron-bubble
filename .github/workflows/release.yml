@@ -1,0 +1,200 @@
+# Runs the same checks and tests as validate.yml, then builds and releases the executable on every push to main and manually.
+# Everything happens in one job, independent of validate.yml, so a merged pull request triggers only this workflow.
+# The release is skipped if the GitHub release for the current version already exists, so pushes without a version change do not fail.
+# Release tag: nemotron-bubble.<Version>, asset: nemotron-bubble.<Version>.win-x64.tgz with the executable, its dependencies, CHANGELOG.md, README.md and LICENSE.
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+
+# Serialize releases (queue, don't cancel), so they never race on tags.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  release:
+    name: Validate, build and release executable
+    # The app uses the Win32 API and links against MSVC, so it is built natively on Windows.
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+
+      - name: <Setup> Checkout repository
+        uses: actions/checkout@v4
+
+      # The windows-latest image ships rustup and the MSVC build tools. Only the stable toolchain is pinned.
+      - name: <Setup> Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: <Setup> Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: <Test> Check version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages[0].version
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$') {
+              Write-Host "❌ Version '$version' in Cargo.toml is not a SemVer version."
+              "| ❌ | Version | ``$version`` is not SemVer |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          Write-Host "✅ Version $version"
+          "| ✅ | Version | ``$version`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+          "version=$version" >> $Env:GITHUB_OUTPUT
+          "tag=nemotron-bubble.$version" >> $Env:GITHUB_OUTPUT
+          "archive-name=nemotron-bubble.$version.win-x64.tgz" >> $Env:GITHUB_OUTPUT
+
+      # Same rules as validate.yml: an entry for the current version must exist, and its date must not be a placeholder.
+      - name: <Test> Check changelog version
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $content = Get-Content -Path CHANGELOG.md -Raw
+          $entryPattern = "(?ms)^##[ \t]+$([regex]::Escape($Env:VERSION))[ \t]*\r?\n(?<Body>.*?)(?=\r?\n_{3}|\r?\n##[ \t]|\z)"
+          if ($content -notmatch $entryPattern) {
+              Write-Host "❌ CHANGELOG.md has no '## $Env:VERSION' entry."
+              "| ❌ | Changelog | No ``## $Env:VERSION`` entry |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          $body = $Matches['Body']
+          if ($body -match '(?::calendar:|📅)\s*_([^_]+)_') {
+              $date = $Matches[1]
+              if ($date -match '\?') {
+                  Write-Host "❌ Version $Env:VERSION still has a placeholder date ('$date')."
+                  "| ❌ | Changelog | Placeholder date ``$date`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+                  exit 1
+              }
+              Write-Host "✅ Changelog $Env:VERSION ($date)"
+              "| ✅ | Changelog | ``$date`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+          } else {
+              Write-Host "⚠️ Version $Env:VERSION has no date line (warning only)."
+              "| ⚠️ | Changelog | No date line found |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+          }
+
+      # The two model tests in engine.rs are marked #[ignore], because they need the ~5 GB of models.
+      - name: <Test> Run tests
+        shell: pwsh
+        run: |
+          cargo test --locked
+          if ($LASTEXITCODE -ne 0) {
+              "| ❌ | Tests | Failed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          "| ✅ | Tests | Passed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+
+      - name: <Release> Check for existing release
+        id: existing
+        shell: pwsh
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          & gh release view $Env:TAG *> $null
+          $exists = $LASTEXITCODE -eq 0
+          $global:LASTEXITCODE = 0
+          if ($exists) {
+              Write-Host "↷ Release '$Env:TAG' already exists, nothing to release."
+              "exists=true" >> $Env:GITHUB_OUTPUT
+          } else {
+              "exists=false" >> $Env:GITHUB_OUTPUT
+          }
+
+      - name: <Build> Build release
+        if: steps.existing.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          cargo build --release --locked
+          if ($LASTEXITCODE -ne 0) {
+              "| ❌ | Build | Failed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          "| ✅ | Build | Passed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+
+      # DirectML.dll is placed next to the exe by the ort-sys build script and is needed for GPU processing.
+      - name: <Release> Create archive
+        if: steps.existing.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          ARCHIVE_NAME: ${{ steps.version.outputs.archive-name }}
+        run: |
+          $files = @('target/release/nemotron-bubble.exe', 'target/release/DirectML.dll', 'CHANGELOG.md', 'README.md', 'LICENSE')
+          foreach ($file in $files) {
+              if (-not (Test-Path $file)) {
+                  Write-Host "❌ Expected file not found: $file"
+                  exit 1
+              }
+          }
+          $packageDirectory = "$Env:RUNNER_TEMP/package"
+          New-Item -ItemType Directory -Path $packageDirectory -Force | Out-Null
+          Copy-Item -Path $files -Destination $packageDirectory
+          $archive = "$Env:RUNNER_TEMP/$Env:ARCHIVE_NAME"
+          & tar -czf $archive -C $packageDirectory .
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Write-Host "✅ Archive: $archive"
+          & tar -tzvf $archive
+
+      # Extracts the entry of the current version from CHANGELOG.md, up to the next version heading or '___' rule.
+      - name: <Release> Extract release notes
+        if: steps.existing.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $content = Get-Content -Path CHANGELOG.md -Raw
+          $entryPattern = "(?ms)^(?<Entry>##[ \t]+$([regex]::Escape($Env:VERSION))[ \t]*\r?\n.*?)(?=\r?\n_{3}|\r?\n##[ \t]|\z)"
+          if ($content -notmatch $entryPattern) {
+              Write-Host "❌ CHANGELOG.md has no '## $Env:VERSION' entry."
+              exit 1
+          }
+          $Matches['Entry'].Trim() | Set-Content -Path "$Env:RUNNER_TEMP/release-notes.md" -Encoding utf8NoBOM
+
+      - name: <Release> Create GitHub release
+        if: steps.existing.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          ARCHIVE_NAME: ${{ steps.version.outputs.archive-name }}
+        run: |
+          & gh release create $Env:TAG "$Env:RUNNER_TEMP/$Env:ARCHIVE_NAME" `
+              --title $Env:TAG `
+              --notes-file "$Env:RUNNER_TEMP/release-notes.md" `
+              --target $Env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: <Summary> Write step summary
+        if: always()
+        shell: pwsh
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if (Test-Path "$Env:RUNNER_TEMP/ci-summary.md") {
+              @('### Validation', '', '| | Check | Result |', '| --- | --- | --- |') | Add-Content $Env:GITHUB_STEP_SUMMARY
+              Get-Content "$Env:RUNNER_TEMP/ci-summary.md" | Add-Content $Env:GITHUB_STEP_SUMMARY
+          }
+          if ('${{ steps.existing.outputs.exists }}' -eq 'true') {
+              "`n### Release`n`n↷ ``$Env:TAG`` already exists, nothing was released." | Add-Content $Env:GITHUB_STEP_SUMMARY
+          } elseif ('${{ job.status }}' -eq 'success') {
+              "`n### Release`n`n✅ [$Env:TAG]($Env:GITHUB_SERVER_URL/$Env:GITHUB_REPOSITORY/releases/tag/$Env:TAG)" | Add-Content $Env:GITHUB_STEP_SUMMARY
+          }
