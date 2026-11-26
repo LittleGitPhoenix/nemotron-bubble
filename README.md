@@ -6,10 +6,7 @@ Press your shortcut, speak, and your words appear at the cursor. Speech recognit
 
 <img src="docs/demo.gif" width="460" alt="Nemotron Bubble live waveform" />
 
-![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
-![Built with Rust](https://img.shields.io/badge/built%20with-Rust-CE412B?logo=rust&logoColor=white)
-![100% offline](https://img.shields.io/badge/100%25-offline-2ea44f)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white) ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-CE412B?logo=rust&logoColor=white) ![100% offline](https://img.shields.io/badge/100%25-offline-2ea44f) ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 ___
 
@@ -58,9 +55,9 @@ Click the bubble or the tray icon to open it. It appears next to whatever you cl
 
 <table>
   <tr>
-    <th>History</th>
-    <th>Model</th>
-    <th>Settings</th>
+    <th width="33%">History</th>
+    <th width="33%">Model</th>
+    <th width="33%">Settings</th>
   </tr>
   <tr>
     <td><img src="docs/settings-history.png" width="260" alt="History tab" /></td>
