@@ -314,19 +314,21 @@ pub(crate) fn self_test() -> Result<()> {
         NemotronMode::Multilingual => "Multilingual",
     };
     // A few chunks of silence: the first one includes warm-up, so time the rest.
-    let _ = model.transcribe_chunk(&vec![0.0; NEMOTRON_CHUNK_SIZE])?;
+    let silence = vec![0.0; model.chunk_samples()];
+    let chunk_ms = chunk_duration_ms(&model);
+    let _ = model.transcribe_chunk(&silence)?;
     const TIMED_CHUNKS: u32 = 5;
     let started = Instant::now();
     for _ in 0..TIMED_CHUNKS {
-        let _ = model.transcribe_chunk(&vec![0.0; NEMOTRON_CHUNK_SIZE])?;
+        let _ = model.transcribe_chunk(&silence)?;
     }
     let per_chunk_ms = started.elapsed().as_secs_f32() * 1000.0 / TIMED_CHUNKS as f32;
     println!("Nemotron loaded: {mode}");
     println!("Running on: {}", if loaded.on_gpu { "GPU (DirectML)" } else { "CPU" });
-    println!("Time per 560 ms audio chunk: {per_chunk_ms:.0} ms");
+    println!("Time per {chunk_ms:.0} ms audio chunk: {per_chunk_ms:.0} ms");
     println!("Model dir: {}", model_dir.display());
     log_info(&format!(
-        "Self-test: {mode} on the {}, {per_chunk_ms:.0} ms per 560 ms chunk",
+        "Self-test: {mode} on the {}, {per_chunk_ms:.0} ms per {chunk_ms:.0} ms chunk",
         if loaded.on_gpu { "GPU" } else { "CPU" }
     ));
     Ok(())

@@ -9,7 +9,7 @@ pub(crate) struct HistoryItem {
     /// Where the dictation was processed: "CPU" or "GPU". Missing in older entries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) processing: Option<String>,
-    /// Average inference time per 560 ms audio chunk, in milliseconds.
+    /// Average inference time per audio chunk (560 ms with the downloadable models), in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) ms_per_chunk: Option<u32>,
 }

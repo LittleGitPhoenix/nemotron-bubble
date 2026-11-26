@@ -361,7 +361,7 @@ impl InputCallback {
 
 /// Averages interleaved frames of `channels` samples into one mono sample each.
 /// An incomplete frame at the end of the block is dropped.
-fn downmix_to_mono<I>(samples: I, channels: usize) -> Vec<f32>
+pub(crate) fn downmix_to_mono<I>(samples: I, channels: usize) -> Vec<f32>
 where
     I: Iterator<Item = f32>,
 {
@@ -440,10 +440,112 @@ impl LinearResampler {
     }
 }
 
+/// Audio from a WAV file: interleaved samples in -1.0..1.0.
+#[cfg(test)]
+pub(crate) struct WavAudio {
+    pub(crate) channels: usize,
+    pub(crate) sample_rate: u32,
+    pub(crate) samples: Vec<f32>,
+}
+
+/// Reads a 16-bit PCM WAV file, the format test recordings use. Other formats are rejected.
+#[cfg(test)]
+pub(crate) fn read_wav(bytes: &[u8]) -> Result<WavAudio> {
+    let u16_at = |offset: usize| u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+    let u32_at = |offset: usize| u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four bytes"));
+
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        bail!("not a RIFF/WAVE file");
+    }
+    let mut format = None;
+    let mut offset = 12;
+    while offset + 8 <= bytes.len() {
+        let id = &bytes[offset..offset + 4];
+        let size = u32_at(offset + 4) as usize;
+        let body = offset + 8;
+        let end = body.checked_add(size).filter(|end| *end <= bytes.len());
+        let Some(end) = end else {
+            bail!("chunk {:?} is truncated", String::from_utf8_lossy(id));
+        };
+        match id {
+            b"fmt " if size >= 16 => {
+                let (tag, channels, rate, bits) = (u16_at(body), u16_at(body + 2), u32_at(body + 4), u16_at(body + 14));
+                if tag != 1 || bits != 16 || channels == 0 {
+                    bail!("only 16-bit PCM is supported (format {tag}, {bits} bits, {channels} channels)");
+                }
+                format = Some((channels as usize, rate));
+            }
+            b"data" => {
+                let Some((channels, sample_rate)) = format else {
+                    bail!("data chunk before fmt chunk");
+                };
+                let samples = bytes[body..end]
+                    .chunks_exact(2)
+                    .map(|pair| i16::from_le_bytes([pair[0], pair[1]]) as f32 / 32_768.0)
+                    .collect();
+                return Ok(WavAudio { channels, sample_rate, samples });
+            }
+            _ => {}
+        }
+        // Chunks are padded to an even size.
+        offset = end + (size & 1);
+    }
+    bail!("no data chunk")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::f32::consts::TAU;
+
+    /// A 16-bit PCM WAV file with an extra chunk before the data, as many editors write it.
+    fn wav_file(channels: u16, sample_rate: u32, samples: &[i16]) -> Vec<u8> {
+        let data: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&1u16.to_le_bytes());
+        fmt.extend_from_slice(&channels.to_le_bytes());
+        fmt.extend_from_slice(&sample_rate.to_le_bytes());
+        fmt.extend_from_slice(&(sample_rate * channels as u32 * 2).to_le_bytes());
+        fmt.extend_from_slice(&(channels * 2).to_le_bytes());
+        fmt.extend_from_slice(&16u16.to_le_bytes());
+
+        let mut body = b"WAVE".to_vec();
+        for (id, content) in [(b"fmt ", fmt), (b"LIST", b"odd".to_vec()), (b"data", data)] {
+            body.extend_from_slice(id);
+            body.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            body.extend_from_slice(&content);
+            if content.len() % 2 == 1 {
+                body.push(0);
+            }
+        }
+        let mut file = b"RIFF".to_vec();
+        file.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        file.extend_from_slice(&body);
+        file
+    }
+
+    #[test]
+    fn read_wav_reads_16_bit_pcm() {
+        let wav = read_wav(&wav_file(2, 24_000, &[0, 16_384, -32_768, 32_767])).unwrap();
+        assert_eq!((wav.channels, wav.sample_rate), (2, 24_000));
+        assert_eq!(wav.samples, [0.0, 0.5, -1.0, 32_767.0 / 32_768.0]);
+    }
+
+    #[test]
+    fn read_wav_rejects_other_formats() {
+        let mut float = wav_file(1, 16_000, &[0, 0]);
+        float[20] = 3; // Format tag 3 is IEEE float.
+        assert!(read_wav(&float).is_err());
+        assert!(read_wav(b"RIFF\0\0\0\0WAVX").is_err());
+        assert!(read_wav(b"").is_err());
+    }
+
+    #[test]
+    fn read_wav_rejects_truncated_data() {
+        let mut wav = wav_file(1, 16_000, &[1, 2, 3, 4]);
+        wav.truncate(wav.len() - 2);
+        assert!(read_wav(&wav).is_err());
+    }
 
     fn sine(frequency: f32, rate: f32, count: usize) -> Vec<f32> {
         (0..count).map(|index| (TAU * frequency * index as f32 / rate).sin()).collect()
