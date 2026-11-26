@@ -165,6 +165,16 @@ pub(crate) unsafe extern "system" fn wnd_proc(
         }
         WM_MOUSEMOVE => {
             continue_drag();
+            if !is_settings_window(hwnd) {
+                let (x, y) = lparam_point(lparam);
+                bubble_mouse_move(hwnd, x, y);
+            }
+            0
+        }
+        WM_MOUSELEAVE => {
+            if !is_settings_window(hwnd) {
+                bubble_mouse_leave(hwnd);
+            }
             0
         }
         WM_LBUTTONUP => {
