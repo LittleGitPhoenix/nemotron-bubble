@@ -288,7 +288,12 @@ fn hash_file(path: &Path, mut progress: impl FnMut(u64)) -> Result<String> {
         hasher.update(&buffer[..read]);
         progress(read as u64);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(to_hex(&hasher.finalize()))
+}
+
+/// Lowercase hex of `bytes`, the form in which Hugging Face publishes SHA-256 values.
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// The hashes of an installed model: from model-info.json when it still
@@ -723,7 +728,7 @@ fn download_file(progress: &mut Progress, dir: &Path, folder: &str, file: &Model
     if have != file.size {
         bail!("{}: received {have} of {} bytes", file.name, file.size);
     }
-    let sha256 = format!("{:x}", hasher.finalize());
+    let sha256 = to_hex(&hasher.finalize());
     if sha256 != file.sha256 {
         let _ = fs::remove_file(&part);
         bail!("{} is damaged (SHA-256 does not match). Download it again.", file.name);
