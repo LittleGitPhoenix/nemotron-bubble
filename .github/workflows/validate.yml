@@ -1,0 +1,143 @@
+# Validates the repository: version checks, unit tests and a release build.
+# Runs only on pull requests to main and manually, never on the push of a merged pull request. That push is handled by release.yml, which runs the same checks itself.
+# The built executable is uploaded as a workflow artifact for manual download only.
+name: Validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+# Cancel an older, still-running validation for the same ref rather than queuing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  validate:
+    name: Validate repository
+    # The app uses the Win32 API and links against MSVC, so it is built natively on Windows.
+    runs-on: windows-latest
+    steps:
+
+      - name: <Setup> Checkout repository
+        uses: actions/checkout@v4
+
+      # The windows-latest image ships rustup and the MSVC build tools. Only the stable toolchain is pinned.
+      - name: <Setup> Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: <Setup> Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: <Test> Check version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages[0].version
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$') {
+              Write-Host "❌ Version '$version' in Cargo.toml is not a SemVer version."
+              "| ❌ | Version | ``$version`` is not SemVer |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          Write-Host "✅ Version $version"
+          "| ✅ | Version | ``$version`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+          "version=$version" >> $Env:GITHUB_OUTPUT
+          "artifact-name=nemotron-bubble.$version.win-x64" >> $Env:GITHUB_OUTPUT
+
+      # Same rules as Test-ChangelogVersions.ps1 of Automation.Workflows: an entry for the current version must exist, and its date must not be a placeholder.
+      - name: <Test> Check changelog version
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $content = Get-Content -Path CHANGELOG.md -Raw
+          $entryPattern = "(?ms)^##[ \t]+$([regex]::Escape($Env:VERSION))[ \t]*\r?\n(?<Body>.*?)(?=\r?\n_{3}|\r?\n##[ \t]|\z)"
+          if ($content -notmatch $entryPattern) {
+              Write-Host "❌ CHANGELOG.md has no '## $Env:VERSION' entry."
+              "| ❌ | Changelog | No ``## $Env:VERSION`` entry |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          $body = $Matches['Body']
+          if ($body -match '(?::calendar:|📅)\s*_([^_]+)_') {
+              $date = $Matches[1]
+              if ($date -match '\?') {
+                  Write-Host "❌ Version $Env:VERSION still has a placeholder date ('$date')."
+                  "| ❌ | Changelog | Placeholder date ``$date`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+                  exit 1
+              }
+              Write-Host "✅ Changelog $Env:VERSION ($date)"
+              "| ✅ | Changelog | ``$date`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+          } else {
+              Write-Host "⚠️ Version $Env:VERSION has no date line (warning only)."
+              "| ⚠️ | Changelog | No date line found |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+          }
+
+      # The two model tests in engine.rs are marked #[ignore], because they need the ~5 GB of models.
+      - name: <Test> Run tests
+        shell: pwsh
+        run: |
+          cargo test --locked
+          if ($LASTEXITCODE -ne 0) {
+              "| ❌ | Tests | Failed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          "| ✅ | Tests | Passed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+
+      - name: <Build> Build release
+        shell: pwsh
+        run: |
+          cargo build --release --locked
+          if ($LASTEXITCODE -ne 0) {
+              "| ❌ | Build | Failed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              exit 1
+          }
+          "| ✅ | Build | Passed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+
+      # DirectML.dll is placed next to the exe by the ort-sys build script and is needed for GPU processing.
+      - name: <Build> Collect binaries
+        shell: pwsh
+        run: |
+          $files = @('target/release/nemotron-bubble.exe', 'target/release/DirectML.dll')
+          foreach ($file in $files) {
+              if (-not (Test-Path $file)) {
+                  Write-Host "❌ Expected build output not found: $file"
+                  exit 1
+              }
+          }
+          New-Item -ItemType Directory -Path "$Env:RUNNER_TEMP/bin" -Force | Out-Null
+          Copy-Item -Path $files -Destination "$Env:RUNNER_TEMP/bin"
+
+      - name: <Build> Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.artifact-name }}
+          path: ${{ runner.temp }}/bin/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: <Summary> Write step summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "$Env:RUNNER_TEMP/ci-summary.md") {
+              @('### Validation', '', '| | Check | Result |', '| --- | --- | --- |') | Add-Content $Env:GITHUB_STEP_SUMMARY
+              Get-Content "$Env:RUNNER_TEMP/ci-summary.md" | Add-Content $Env:GITHUB_STEP_SUMMARY
+          }
