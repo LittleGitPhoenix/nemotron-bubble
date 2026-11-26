@@ -149,3 +149,51 @@ pub(crate) fn clear_history(app: &Arc<AppState>) {
     refresh_history_view(app);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(processing: Option<&str>, ms_per_chunk: Option<u32>) -> HistoryItem {
+        HistoryItem {
+            timestamp: "Nov 24, 11:34 AM".to_string(),
+            text: "Hello".to_string(),
+            processing: processing.map(str::to_string),
+            ms_per_chunk,
+        }
+    }
+
+    #[test]
+    fn header_includes_statistics_when_known() {
+        assert_eq!(
+            item(Some("CPU"), Some(130)).header(),
+            "Nov 24, 11:34 AM · CPU · 130 ms per chunk"
+        );
+    }
+
+    #[test]
+    fn header_is_timestamp_only_without_statistics() {
+        assert_eq!(item(None, None).header(), "Nov 24, 11:34 AM");
+        assert_eq!(item(Some("GPU"), None).header(), "Nov 24, 11:34 AM");
+    }
+
+    #[test]
+    fn older_entries_without_statistics_still_load() {
+        let items: Vec<HistoryItem> =
+            serde_json::from_str(r#"[{ "timestamp": "Nov 1, 9:00 AM", "text": "Old" }]"#).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].processing, None);
+        assert_eq!(items[0].ms_per_chunk, None);
+    }
+
+    #[test]
+    fn missing_statistics_are_not_written() {
+        let json = serde_json::to_value(item(None, None)).unwrap();
+        assert!(json.get("processing").is_none());
+        assert!(json.get("ms_per_chunk").is_none());
+
+        let json = serde_json::to_value(item(Some("GPU"), Some(290))).unwrap();
+        assert_eq!(json["processing"], "GPU");
+        assert_eq!(json["ms_per_chunk"], 290);
+    }
+}
+

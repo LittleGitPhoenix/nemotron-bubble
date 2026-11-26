@@ -234,6 +234,20 @@ cargo run --release --features assets -- --render-assets docs
 cargo run --release --features assets -- --render-icon assets/nemotron-bubble.ico
 ```
 
+### Tests
+
+The unit tests live next to the code they test, in a `#[cfg(test)] mod tests` block at the end of each file. They cover the pure logic: settings and history files, language and choice values, model manifest checks and backups, hashing and the Win32 string helpers. The UI, the hotkey, audio capture and speech recognition are not covered.
+
+```powershell
+cargo test
+```
+
+When cross-compiling from Linux or WSL with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin), the test exe is a Windows program. cargo-xwin starts it through Wine by default. Inside WSL it can run directly on Windows instead:
+
+```bash
+CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER=env cargo xwin test --target x86_64-pc-windows-msvc
+```
+
 ___
 
 ## Credits
