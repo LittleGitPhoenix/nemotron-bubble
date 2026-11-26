@@ -12,8 +12,8 @@ pub(crate) const VOICE_RMS_THRESHOLD: f32 = 0.02;
 pub(crate) static MIC_FAILED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
-    // The live microphone stream. cpal streams are not Send, so it lives on the
-    // UI thread (which is also the main thread) and is (re)opened lazily there.
+    // The live microphone stream. It lives on the UI thread (which is also the
+    // main thread) and is (re)opened lazily there.
     pub(crate) static AUDIO_STREAM: RefCell<Option<cpal::Stream>> = const { RefCell::new(None) };
     // Windows name of the device AUDIO_STREAM records from.
     pub(crate) static OPEN_MICROPHONE: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -21,10 +21,18 @@ thread_local! {
     pub(crate) static MICROPHONE_MENU: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
+/// The name Windows shows for `device` (its friendly name, e.g. "Microphone (USB Audio)").
+fn device_name(device: &cpal::Device) -> Option<String> {
+    device
+        .description()
+        .ok()
+        .map(|description| description.name().to_string())
+}
+
 /// Names of all active input devices, as Windows shows them.
 pub(crate) fn input_device_names() -> Vec<String> {
     match cpal::default_host().input_devices() {
-        Ok(devices) => devices.filter_map(|device| device.name().ok()).collect(),
+        Ok(devices) => devices.filter_map(|device| device_name(&device)).collect(),
         Err(err) => {
             log_error(&format!("Could not list microphones: {err}"));
             Vec::new()
@@ -36,7 +44,7 @@ pub(crate) fn input_device_names() -> Vec<String> {
 pub(crate) fn default_input_device_name() -> Option<String> {
     cpal::default_host()
         .default_input_device()
-        .and_then(|device| device.name().ok())
+        .and_then(|device| device_name(&device))
 }
 
 /// Name of the device the open stream records from (None when no stream is open).
@@ -186,7 +194,7 @@ fn pick_input_device(app: &Arc<AppState>, host: &cpal::Host) -> Result<cpal::Dev
         let found = host
             .input_devices()
             .ok()
-            .and_then(|mut devices| devices.find(|device| device.name().is_ok_and(|name| name == wanted)));
+            .and_then(|mut devices| devices.find(|device| device_name(device).is_some_and(|name| name == wanted)));
         if let Some(device) = found {
             return Ok(device);
         }
@@ -200,11 +208,11 @@ fn pick_input_device(app: &Arc<AppState>, host: &cpal::Host) -> Result<cpal::Dev
 pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<(cpal::Stream, String)> {
     let host = cpal::default_host();
     let device = pick_input_device(&app, &host)?;
-    let device_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
+    let device_name = device_name(&device).unwrap_or_else(|| "<unknown>".to_string());
     let input_config = device
         .default_input_config()
         .with_context(|| format!("microphone '{device_name}' has no usable input format"))?;
-    let sample_rate = input_config.sample_rate().0 as f64;
+    let sample_rate = input_config.sample_rate() as f64;
     let channels = input_config.channels() as usize;
     let config = input_config.config();
     log_info(&format!(
@@ -223,53 +231,67 @@ pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<(cpal::Stream, S
     let tx = app.engine_tx.clone();
     let recording = app.recording.clone();
     let err_app = app.clone();
-    let err_fn = move |err: cpal::StreamError| {
-        log_error(&format!("Microphone stream error: {err}"));
-        MIC_FAILED.store(true, Ordering::SeqCst);
-        update_ui(&err_app, |ui| {
-            ui.status = "Microphone error.".to_string();
-            ui.transcript = err.to_string();
-            // Shown by the bubble and the tray icon until retry_audio_capture
-            // has reopened the stream.
-            ui.mic_error = Some(err.to_string());
-        });
+    let err_fn = move |err: cpal::Error| match err.kind() {
+        // A short drop-out (the system was busy for a moment) or a refused
+        // real-time priority. The stream keeps running.
+        cpal::ErrorKind::Xrun | cpal::ErrorKind::RealtimeDenied => {}
+        // The stream followed a new Windows default device on its own.
+        cpal::ErrorKind::DeviceChanged => log_info(&format!("Microphone stream: {err}")),
+        _ => {
+            log_error(&format!("Microphone stream error: {err}"));
+            MIC_FAILED.store(true, Ordering::SeqCst);
+            update_ui(&err_app, |ui| {
+                ui.status = "Microphone error.".to_string();
+                ui.transcript = err.to_string();
+                // Shown by the bubble and the tray icon until retry_audio_capture
+                // has reopened the stream.
+                ui.mic_error = Some(err.to_string());
+            });
+        }
     };
 
+    use cpal::SampleFormat as Format;
+    let callback = InputCallback::new(channels, sample_rate, recording, tx, app.clone());
     let stream = match input_config.sample_format() {
-        cpal::SampleFormat::F32 => {
-            let mut callback = InputCallback::new(channels, sample_rate, recording, tx, app.clone());
-            device.build_input_stream(
-                &config,
-                move |data: &[f32], _| callback.push_f32(data),
-                err_fn,
-                None,
-            )?
-        }
-        cpal::SampleFormat::I16 => {
-            let mut callback = InputCallback::new(channels, sample_rate, recording, tx, app.clone());
-            device.build_input_stream(
-                &config,
-                move |data: &[i16], _| callback.push_i16(data),
-                err_fn,
-                None,
-            )?
-        }
-        cpal::SampleFormat::U16 => {
-            let mut callback = InputCallback::new(channels, sample_rate, recording, tx, app.clone());
-            device.build_input_stream(
-                &config,
-                move |data: &[u16], _| callback.push_u16(data),
-                err_fn,
-                None,
-            )?
-        }
-        other => return Err(anyhow!("unsupported microphone sample format: {other:?}")),
-    };
+        Format::F32 => build_input_stream::<f32>(&device, config, callback, err_fn),
+        Format::F64 => build_input_stream::<f64>(&device, config, callback, err_fn),
+        Format::I8 => build_input_stream::<i8>(&device, config, callback, err_fn),
+        Format::I16 => build_input_stream::<i16>(&device, config, callback, err_fn),
+        Format::I24 => build_input_stream::<cpal::I24>(&device, config, callback, err_fn),
+        Format::I32 => build_input_stream::<i32>(&device, config, callback, err_fn),
+        Format::I64 => build_input_stream::<i64>(&device, config, callback, err_fn),
+        Format::U8 => build_input_stream::<u8>(&device, config, callback, err_fn),
+        Format::U16 => build_input_stream::<u16>(&device, config, callback, err_fn),
+        Format::U24 => build_input_stream::<cpal::U24>(&device, config, callback, err_fn),
+        Format::U32 => build_input_stream::<u32>(&device, config, callback, err_fn),
+        Format::U64 => build_input_stream::<u64>(&device, config, callback, err_fn),
+        other => Err(anyhow!("unsupported microphone sample format: {other:?}")),
+    }?;
 
     stream
         .play()
         .with_context(|| format!("could not start recording from '{device_name}'"))?;
     Ok((stream, device_name))
+}
+
+/// Build the (paused) input stream for samples of type `T`, which `callback`
+/// receives converted to f32.
+fn build_input_stream<T>(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    mut callback: InputCallback,
+    err_fn: impl FnMut(cpal::Error) + Send + 'static,
+) -> Result<cpal::Stream>
+where
+    T: cpal::SizedSample,
+    f32: cpal::FromSample<T>,
+{
+    Ok(device.build_input_stream(
+        config,
+        move |data: &[T], _: &cpal::InputCallbackInfo| callback.push(data),
+        err_fn,
+        None,
+    )?)
 }
 
 pub(crate) struct InputCallback {
@@ -299,16 +321,13 @@ impl InputCallback {
         }
     }
 
-    pub(crate) fn push_f32(&mut self, data: &[f32]) {
-        self.process(data.iter().copied());
-    }
-
-    pub(crate) fn push_i16(&mut self, data: &[i16]) {
-        self.process(data.iter().map(|s| *s as f32 / 32768.0));
-    }
-
-    pub(crate) fn push_u16(&mut self, data: &[u16]) {
-        self.process(data.iter().map(|s| (*s as f32 / 65535.0) * 2.0 - 1.0));
+    /// Samples of any format, converted to f32 in -1.0..1.0.
+    pub(crate) fn push<T>(&mut self, data: &[T])
+    where
+        T: cpal::Sample,
+        f32: cpal::FromSample<T>,
+    {
+        self.process(data.iter().map(|sample| <f32 as cpal::FromSample<T>>::from_sample_(*sample)));
     }
 
     pub(crate) fn process<I>(&mut self, samples: I)

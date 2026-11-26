@@ -25,6 +25,7 @@ ___
 - The new `--self-test` parameter prints to the console and reports the device and the processing time per chunk.
 - The version is shown in the settings window, the tray menu and the file properties of the executable.
 - An icon for the executable.
+- Microphones that deliver samples in any integer format (8 to 64 bit) or as 64 bit floats are supported. Before, only 32 bit floats and 16 bit integers worked.
 - A close button on the floating bubble. It appears on the bubble's top-right edge while the mouse is over the bubble and quits the app like *Quit* in the tray menu.
 
 ### Changed
@@ -52,6 +53,7 @@ ___
 ### References
 
 🔵 anyhow ~~1.0.102~~ → **1.0.105**  
+🔵 cpal ~~0.15.3~~ → **0.18.2**  
 🔵 crossbeam-channel ~~0.5.15~~ → **0.5.17**  
 ⚪ embed-resource **3.0.12**  
 🔵 parakeet-rs ~~0.3.6~~ → **0.4.4**  
