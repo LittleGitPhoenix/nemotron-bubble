@@ -5,5 +5,5 @@
 /scripts/build-wsl.ps1
 /scripts/build-wsl.sh
 
-# Ignore user instructions for GitHub Copilot.
-/.github/instructions/user*.instructions.md
+# Local instructions for Claude, specific to one machine.
+/.claude/rules/user*.instructions.md
