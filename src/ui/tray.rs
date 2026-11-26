@@ -114,6 +114,9 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
         }
     }
 
+    // The version heads the menu as information, Quit ends it like in other Windows apps.
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, version_text.as_ptr());
+    AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, IDM_START_STOP, start_text.as_ptr());
     AppendMenuW(menu, MF_STRING, IDM_SHOW_HIDE, show_text.as_ptr());
     if model_menu != null_mut() {
@@ -154,8 +157,6 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, IDM_QUIT, quit_text.as_ptr());
-    AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, version_text.as_ptr());
 
     let mut point: POINT = std::mem::zeroed();
     GetCursorPos(&mut point);
