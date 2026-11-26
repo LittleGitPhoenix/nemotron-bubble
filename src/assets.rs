@@ -81,10 +81,17 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
             language: "de".to_string(),
             ..AppSettings::default()
         };
-        for (tab, name, settings, status) in [
-            (TAB_HISTORY, "window-history.png", AppSettings::default(), ""),
-            (TAB_MODEL, "window-model.png", multilingual, "Loaded: Multilingual (German) · CPU"),
-            (TAB_SETTINGS, "window-settings.png", AppSettings::default(), ""),
+        let ready = ready_status(&AppSettings::default());
+        for (tab, name, settings, status, model_status) in [
+            (TAB_HISTORY, "window-history.png", AppSettings::default(), ready.as_str(), ""),
+            (
+                TAB_MODEL,
+                "window-model.png",
+                multilingual,
+                "Downloading the English model...",
+                "Loaded: Multilingual (German) · CPU",
+            ),
+            (TAB_SETTINGS, "window-settings.png", AppSettings::default(), ready.as_str(), ""),
         ] {
             if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
                 let view = HistoryView {
@@ -114,7 +121,17 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
                     },
                 ];
                 unsafe {
-                    render_application_window(&mut canvas, &settings, status, &view, &settings_view, &downloads, false, tab)
+                    render_application_window(
+                        &mut canvas,
+                        &settings,
+                        status,
+                        model_status,
+                        &view,
+                        &settings_view,
+                        &downloads,
+                        false,
+                        tab,
+                    )
                 };
                 let rgba = window_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
                 write_png(&dir.join(name), cw as u32, ch as u32, &rgba)?;

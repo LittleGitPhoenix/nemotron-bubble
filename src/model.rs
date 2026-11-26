@@ -12,10 +12,12 @@ pub(crate) fn select_model(app: &Arc<AppState>, choice: ModelChoice) {
         return;
     }
     if !model_choice_available(&settings_snapshot(app), choice) {
+        log_info(
+            "Predefined needs NEMOTRON_MODEL_DIR or \"model_dir\" in config\\settings.json \
+             (restart the app after setting it).",
+        );
         update_ui(app, |ui| {
-            ui.status = "Predefined needs NEMOTRON_MODEL_DIR or \"model_dir\" in config\\settings.json \
-                         (restart the app after setting it)."
-                .to_string();
+            ui.status = "No model folder is set for Predefined. See the log.".to_string();
         });
         return;
     }
@@ -41,7 +43,7 @@ pub(crate) fn select_model(app: &Arc<AppState>, choice: ModelChoice) {
         ui.status = if settings.preload_model {
             format!("Switching to {} model...", choice.label())
         } else {
-            format!("{} model selected. It loads on first dictation.", choice.label())
+            format!("{} model selected. Loads on first dictation.", choice.label())
         };
     });
 }
@@ -425,11 +427,5 @@ pub(crate) fn find_model_dir(choice: ModelChoice, configured_dir: &str) -> Resul
             .collect::<Vec<_>>()
             .join("\n")
     ))
-}
-
-pub(crate) fn expected_model_hint() -> String {
-    env::current_dir()
-        .map(|cwd| cwd.join("models").join("nemotron").display().to_string())
-        .unwrap_or_else(|_| "models\\nemotron".to_string())
 }
 

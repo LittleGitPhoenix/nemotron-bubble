@@ -146,22 +146,17 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         model = Some(loaded.model);
                         model_path = loaded.dir;
                         on_gpu = loaded.on_gpu;
+                        let status = ready_status(&settings_snapshot(&app));
                         update_ui(&app, |ui| {
-                            ui.status = "Ready. Nemotron loaded. Ctrl+Space toggles.".to_string();
-                            ui.model_dir = model_path.display().to_string();
+                            ui.status = status;
                             ui.model_status = label;
-                            if ui.transcript.trim().is_empty() {
-                                ui.transcript = "Tap Ctrl+Space to dictate.".to_string();
-                            }
                         });
                     }
                     Err(err) => {
                         preload_failed = true;
                         report_model_error(&err);
                         update_ui(&app, |ui| {
-                            ui.status = "Nemotron model missing or failed to load.".to_string();
-                            ui.transcript = format!("{err:#}");
-                            ui.model_dir = expected_model_hint();
+                            ui.status = "The speech model failed to load. See the log.".to_string();
                             ui.model_status = "Failed to load - see log.".to_string();
                         });
                     }
@@ -217,9 +212,7 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                             update_ui(&app, |ui| {
                                 ui.model_status = "Failed to load - see log.".to_string();
                                 ui.recording = false;
-                                ui.status = "Nemotron model missing or failed to load.".to_string();
-                                ui.transcript = format!("{err:#}");
-                                ui.model_dir = expected_model_hint();
+                                ui.status = "The speech model failed to load. See the log.".to_string();
                             });
                             continue;
                         }
@@ -232,8 +225,6 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                     update_ui(&app, |ui| {
                         ui.recording = true;
                         ui.status = "Listening...".to_string();
-                        ui.transcript.clear();
-                        ui.model_dir = model_path.display().to_string();
                     });
                     play_start_sound(&app);
                 }
@@ -269,7 +260,6 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         } else {
                             "Listening...".to_string()
                         };
-                        ui.transcript.push_str(text);
                     });
                 });
                 if let Err(err) = result {
@@ -278,8 +268,7 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                     app.recording.store(false, Ordering::SeqCst);
                     update_ui(&app, |ui| {
                         ui.recording = false;
-                        ui.status = "ASR error.".to_string();
-                        ui.transcript = format!("{err:#}");
+                        ui.status = "Speech recognition failed. See the log.".to_string();
                     });
                 }
             }
@@ -310,10 +299,12 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         let final_text = finished.transcript;
                         let has_final = !final_text.trim().is_empty();
                         let settings = settings_snapshot(&app);
-                        let mut final_status = if has_final {
+                        let mut final_status = if !has_final {
+                            "No speech detected.".to_string()
+                        } else if settings.live_type_into_cursor {
                             "Stopped. Text was typed live.".to_string()
                         } else {
-                            "Ready. Press Ctrl+Space to start.".to_string()
+                            "Stopped. The text is in the history.".to_string()
                         };
 
                         if has_final {
@@ -351,17 +342,13 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         update_ui(&app, |ui| {
                             ui.recording = false;
                             ui.status = final_status;
-                            ui.transcript = if !has_final {
-                                "No speech detected.".to_string()
-                            } else {
-                                final_text
-                            };
                         });
                     }
                 } else {
+                    let status = ready_status(&settings_snapshot(&app));
                     update_ui(&app, |ui| {
                         ui.recording = false;
-                        ui.status = "Ready. Press Ctrl+Space to start.".to_string();
+                        ui.status = status;
                     });
                 }
                 // If this stop was triggered by Enter, submit now that the full
@@ -403,7 +390,6 @@ pub(crate) fn start_recording(app: &Arc<AppState>) {
         ui.recording = true;
         ui.visible = true;
         ui.status = "Starting...".to_string();
-        ui.transcript.clear();
         ui.last_voice = Instant::now(); // reset the silence timer
     });
     unsafe {

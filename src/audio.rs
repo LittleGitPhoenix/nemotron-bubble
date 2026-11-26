@@ -221,12 +221,8 @@ pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<(cpal::Stream, S
         input_config.sample_format()
     ));
 
-    update_ui(&app, |ui| {
-        ui.status = format!(
-            "Ready. Mic: {} Hz, {} channel(s). Ctrl+Space toggles.",
-            sample_rate as u32, channels
-        );
-    });
+    let status = ready_status(&settings_snapshot(&app));
+    update_ui(&app, |ui| ui.status = status);
 
     let tx = app.engine_tx.clone();
     let recording = app.recording.clone();
@@ -241,8 +237,7 @@ pub(crate) fn start_audio_capture(app: Arc<AppState>) -> Result<(cpal::Stream, S
             log_error(&format!("Microphone stream error: {err}"));
             MIC_FAILED.store(true, Ordering::SeqCst);
             update_ui(&err_app, |ui| {
-                ui.status = "Microphone error.".to_string();
-                ui.transcript = err.to_string();
+                ui.status = "Microphone error. See the log.".to_string();
                 // Shown by the bubble and the tray icon until retry_audio_capture
                 // has reopened the stream.
                 ui.mic_error = Some(err.to_string());

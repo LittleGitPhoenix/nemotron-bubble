@@ -264,11 +264,13 @@ impl Default for AppSettings {
             // or moved again, so it must not register itself without being asked.
             start_with_windows: false,
             preload_model: true,
-            // Default to the safe clipboard path: live keystroke injection only behaves
-            // in real text fields, so it is opt-in. On stop we paste once (one Ctrl+V).
-            live_type_into_cursor: false,
-            copy_final_to_clipboard: true,
-            paste_final_on_stop: true,
+            // The words are typed at the cursor while speaking. The clipboard stays
+            // untouched by default. Copying or pasting the transcript on stop is the
+            // fallback for apps where keystroke injection misbehaves. Pasting on top of
+            // live typing would duplicate the text.
+            live_type_into_cursor: true,
+            copy_final_to_clipboard: false,
+            paste_final_on_stop: false,
             sounds_enabled: true,
             waveform_enabled: true,
             bubble_click_opens_window: true,

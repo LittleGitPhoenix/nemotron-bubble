@@ -27,6 +27,7 @@ ___
 - An icon for the executable.
 - Microphones that deliver samples in any integer format (8 to 64 bit) or as 64 bit floats are supported. Before, only 32 bit floats and 16 bit integers worked.
 - A close button on the floating bubble. It appears on the bubble's top-right edge while the mouse is over the bubble and quits the app like *Quit* in the tray menu.
+- A status line under the title of the application window shows the latest message, for example *Listening...*, *Settings saved.* or why a click had no effect. The app always produced these messages but never showed them. They name the configured shortcut instead of always *Ctrl+Space*.
 
 ### Changed
 
@@ -38,6 +39,7 @@ ___
 - The bubble keeps a 10 pixel margin to the screen edges and the taskbar and its shadow is smaller so it no longer overlaps the taskbar.
 - The Space key is labelled *Space* in the shortcut instead of its localized Windows name.
 - The source code is split from one 5,300-line `main.rs` into modules under `src/` and `src/ui/`. The behavior is unchanged.
+- New defaults for inserting the text: *Type live into cursor* is on, *Copy final to clipboard* and *Paste final on stop* are off. The words appear at the cursor while speaking and the clipboard stays untouched. Existing `settings.json` files keep their values.
 - *Start with Windows* is off by default, because a portable app that is only tried out should not register itself. Turning it off only removes the autostart entry if it points to this copy of the exe, so another copy in a different folder keeps its entry.
 
 ### Fixed
@@ -50,6 +52,7 @@ ___
 ### Removed
 
 - `scripts/download-nemotron.ps1`. Models are downloaded on the *Model* tab.
+- *Clear* in the tray menu. It only cleared a transcript that was never shown. The history is cleared with the trash button on the *History* tab.
 
 ### References
 
