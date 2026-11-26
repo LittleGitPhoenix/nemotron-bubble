@@ -4,12 +4,12 @@ use crate::*;
 
 // History tab: a title row with the trash button, then the custom-drawn,
 // scrollable list of entries (copy icon + grey header line + text each).
-pub(crate) const HISTORY_TITLE_TOP: i32 = SETTINGS_CARD_TOP + 14;
-pub(crate) const HISTORY_LIST_TOP: i32 = SETTINGS_CARD_TOP + 52;
-pub(crate) const HISTORY_LIST_BOTTOM: i32 = SETTINGS_HEIGHT - SETTINGS_FOOTER_H - 12;
+pub(crate) const HISTORY_TITLE_TOP: i32 = WINDOW_CARD_TOP + 14;
+pub(crate) const HISTORY_LIST_TOP: i32 = WINDOW_CARD_TOP + 52;
+pub(crate) const HISTORY_LIST_BOTTOM: i32 = WINDOW_HEIGHT - WINDOW_FOOTER_H - 12;
 // Text column (the scrollbar sits in the 12 px to the right of it).
-pub(crate) const HISTORY_TEXT_LEFT: i32 = SETTINGS_INNER_LEFT;
-pub(crate) const HISTORY_TEXT_RIGHT: i32 = SETTINGS_INNER_RIGHT - 8;
+pub(crate) const HISTORY_TEXT_LEFT: i32 = WINDOW_INNER_LEFT;
+pub(crate) const HISTORY_TEXT_RIGHT: i32 = WINDOW_INNER_RIGHT - 8;
 pub(crate) const HISTORY_HEADER_H: i32 = 16;
 pub(crate) const HISTORY_ENTRY_GAP: i32 = 14;
 // Pixels scrolled per mouse-wheel notch.
@@ -67,17 +67,17 @@ pub(crate) unsafe fn measure_history(dc: HDC, items: &[HistoryItem]) -> (Vec<(i3
 }
 
 /// The trash button at the top right of the History tab (clears the history).
-pub(crate) fn settings_clear_history_rect() -> RectI {
+pub(crate) fn clear_history_rect() -> RectI {
     RectI {
-        left: SETTINGS_INNER_RIGHT - 32,
+        left: WINDOW_INNER_RIGHT - 32,
         top: HISTORY_TITLE_TOP - 6,
-        right: SETTINGS_INNER_RIGHT,
+        right: WINDOW_INNER_RIGHT,
         bottom: HISTORY_TITLE_TOP + 26,
     }
 }
 
 pub(crate) fn handle_history_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
-    if settings_clear_history_rect().contains(x, y) {
+    if clear_history_rect().contains(x, y) {
         clear_history(app);
         return;
     }
@@ -124,9 +124,9 @@ pub(crate) fn draw_history_shapes(buf: &mut [u32], cw: i32, ch: i32, list: &Hist
     let view_h = HISTORY_LIST_BOTTOM - HISTORY_LIST_TOP;
     let content_h = list.layout.content_h;
     let scroll = list.layout.scroll;
-    draw_button_bg(buf, cw, ch, settings_clear_history_rect(), false);
+    draw_button_bg(buf, cw, ch, clear_history_rect(), false);
     // thin scrollbar, only when the list is longer than the view
-    let track_x = SETTINGS_INNER_RIGHT + 4;
+    let track_x = WINDOW_INNER_RIGHT + 4;
     draw_scrollbar(buf, cw, ch, track_x, HISTORY_LIST_TOP, view_h, content_h, scroll);
 }
 
@@ -138,10 +138,10 @@ pub(crate) unsafe fn draw_history_text(dc: HDC, history: &HistoryView, list: &mu
     // title row: "Recent dictations" left, trash button right
     SelectObject(dc, ui_font() as _);
     SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Recent dictations", SETTINGS_INNER_LEFT, HISTORY_TITLE_TOP, 220, 20);
+    text_left(dc, "Recent dictations", WINDOW_INNER_LEFT, HISTORY_TITLE_TOP, 220, 20);
     SelectObject(dc, icon_font_large() as _);
     SetTextColor(dc, rgb(214, 220, 230));
-    text_center(dc, GLYPH_TRASH, settings_clear_history_rect());
+    text_center(dc, GLYPH_TRASH, clear_history_rect());
 
     if history.items.is_empty() {
         SelectObject(dc, small_font() as _);
@@ -150,7 +150,7 @@ pub(crate) unsafe fn draw_history_text(dc: HDC, history: &HistoryView, list: &mu
     }
 
     // entries, clipped to the list area and shifted by the scroll offset
-    IntersectClipRect(dc, SETTINGS_CARD_LEFT, HISTORY_LIST_TOP, SETTINGS_INNER_RIGHT, HISTORY_LIST_BOTTOM);
+    IntersectClipRect(dc, WINDOW_CARD_LEFT, HISTORY_LIST_TOP, WINDOW_INNER_RIGHT, HISTORY_LIST_BOTTOM);
     let text_w = HISTORY_TEXT_RIGHT - HISTORY_TEXT_LEFT;
     for (index, (item, (top, text_h))) in history.items.iter().zip(&list.entries).enumerate() {
         let y = HISTORY_LIST_TOP + top - scroll;

@@ -10,7 +10,7 @@ pub(crate) const IDM_CLEAR: usize = 1003;
 pub(crate) const IDM_QUIT: usize = 1004;
 // Tray "Speech model" submenu: one id per ModelChoice, in ModelChoice::ALL order.
 pub(crate) const IDM_MODEL_BASE: usize = 1100;
-// "Language" menus (tray submenu and the settings popup): one id per LANGUAGES entry.
+// "Language" menus (tray submenu and the popup in the application window): one id per LANGUAGES entry.
 pub(crate) const IDM_LANG_BASE: usize = 1200;
 // Tray "Processing" submenu: one id per ComputeChoice, in ComputeChoice::ALL order.
 pub(crate) const IDM_COMPUTE_BASE: usize = 1300;

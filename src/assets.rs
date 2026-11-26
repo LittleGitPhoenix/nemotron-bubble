@@ -6,7 +6,7 @@
 //! | --- | --- |
 //! | `bubble.png` | the floating bubble on transparency, with its soft shadow |
 //! | `demo.gif` | the waveform pulsing on a gradient, as a seamless loop |
-//! | `settings-history.png`, `settings-model.png`, `settings-settings.png` | the tabs of the settings window with demo data |
+//! | `window-history.png`, `window-model.png`, `window-settings.png` | the tabs of the application window with demo data |
 //!
 //! Run with `cargo run --release --features assets -- --render-assets docs`. The exe
 //! icon comes from `--render-icon assets/nemotron-bubble.ico`.
@@ -69,11 +69,11 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
         write_gif(&dir.join("demo.gif"), HERO_W, HERO_H, &frames, 3)?;
     }
 
-    // ---- settings-<tab>.png : one image per tab of the settings window ----
+    // ---- window-<tab>.png : one image per tab of the application window ----
     {
         let history = demo_history();
-        let cw = SETTINGS_WIDTH;
-        let ch = SETTINGS_HEIGHT;
+        let cw = WINDOW_WIDTH;
+        let ch = WINDOW_HEIGHT;
         // The Model tab shows the multilingual model with a language chosen, so
         // the Language control is not greyed out in the README.
         let multilingual = AppSettings {
@@ -82,9 +82,9 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
             ..AppSettings::default()
         };
         for (tab, name, settings, status) in [
-            (TAB_HISTORY, "settings-history.png", AppSettings::default(), ""),
-            (TAB_MODEL, "settings-model.png", multilingual, "Loaded: Multilingual (German) · CPU"),
-            (TAB_SETTINGS, "settings-settings.png", AppSettings::default(), ""),
+            (TAB_HISTORY, "window-history.png", AppSettings::default(), ""),
+            (TAB_MODEL, "window-model.png", multilingual, "Loaded: Multilingual (German) · CPU"),
+            (TAB_SETTINGS, "window-settings.png", AppSettings::default(), ""),
         ] {
             if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
                 let view = HistoryView {
@@ -114,15 +114,15 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
                     },
                 ];
                 unsafe {
-                    render_settings_canvas(&mut canvas, &settings, status, &view, &settings_view, &downloads, false, tab)
+                    render_application_window(&mut canvas, &settings, status, &view, &settings_view, &downloads, false, tab)
                 };
-                let rgba = settings_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
+                let rgba = window_to_rgba(canvas.pixels(), cw as usize, ch as usize, 16.0);
                 write_png(&dir.join(name), cw as u32, ch as u32, &rgba)?;
             }
         }
     }
 
-    println!("Wrote bubble.png, demo.gif and settings-<tab>.png to {out_dir}");
+    println!("Wrote bubble.png, demo.gif and window-<tab>.png to {out_dir}");
     Ok(())
 }
 
@@ -250,7 +250,7 @@ pub(crate) fn composite_over(
 /// Convert an opaque settings canvas to RGBA: GDI text leaves the alpha byte
 /// undefined, so force alpha opaque and apply a rounded-corner mask for polish.
 #[cfg(feature = "assets")]
-pub(crate) fn settings_to_rgba(buf: &[u32], w: usize, h: usize, radius: f32) -> Vec<u8> {
+pub(crate) fn window_to_rgba(buf: &[u32], w: usize, h: usize, radius: f32) -> Vec<u8> {
     let mut out = vec![0u8; w * h * 4];
     let cx = w as f32 / 2.0;
     let cy = h as f32 / 2.0;

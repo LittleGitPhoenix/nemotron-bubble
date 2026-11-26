@@ -26,7 +26,7 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
         return Err(anyhow!("RegisterClassW failed"));
     }
 
-    let title = wide_null("Nemotron Bubble");
+    let title = wide_null("Nemotron Floating Bubble");
     // No WS_VISIBLE: per-pixel-alpha layered windows are made visible only after the
     // first UpdateLayeredWindow so there is never a blank flash.
     let hwnd = CreateWindowExW(
@@ -58,28 +58,28 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
     // A microphone missing at startup was recorded before this window existed.
     sync_mic_indicator(hwnd);
 
-    let settings_title = wide_null("Nemotron Bubble Settings");
-    let settings_hwnd = CreateWindowExW(
+    let application_window_title = wide_null("Nemotron Bubble");
+    let application_window_hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
         class_name.as_ptr(),
-        settings_title.as_ptr(),
+        application_window_title.as_ptr(),
         WS_POPUP,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        SETTINGS_WIDTH,
-        SETTINGS_HEIGHT,
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
         null_mut(),
         null_mut(),
         hinstance,
         null_mut(),
     );
-    if settings_hwnd != null_mut() {
-        SetLayeredWindowAttributes(settings_hwnd, 0, 246, LWA_ALPHA);
-        app.settings_hwnd
-            .store(settings_hwnd as isize, Ordering::SeqCst);
-        place_settings_window(settings_hwnd, SettingsOrigin::Tray); // re-placed whenever shown
-        apply_settings_rounding(settings_hwnd);
-        ShowWindow(settings_hwnd, SW_HIDE);
+    if application_window_hwnd != null_mut() {
+        SetLayeredWindowAttributes(application_window_hwnd, 0, 246, LWA_ALPHA);
+        app.application_window_hwnd
+            .store(application_window_hwnd as isize, Ordering::SeqCst);
+        place_application_window(application_window_hwnd, WindowOrigin::Tray); // re-placed whenever shown
+        apply_application_window_rounding(application_window_hwnd);
+        ShowWindow(application_window_hwnd, SW_HIDE);
     }
 
     let snapshot = settings_snapshot(&app);
@@ -89,7 +89,7 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
             snapshot.hotkey_mods, snapshot.hotkey_vk
         ));
         update_ui(&app, |ui| {
-            ui.status = "Shortcut unavailable — open settings to choose another.".to_string();
+            ui.status = "Shortcut unavailable — choose another on the Settings tab.".to_string();
         });
     }
 
@@ -121,8 +121,8 @@ pub(crate) unsafe extern "system" fn wnd_proc(
         WM_CREATE => 0,
         WM_ERASEBKGND => 1,
         WM_PAINT => {
-            if is_settings_window(hwnd) {
-                paint_settings(hwnd);
+            if is_application_window(hwnd) {
+                paint_application_window(hwnd);
             } else {
                 paint(hwnd);
             }
@@ -146,7 +146,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
             0
         }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
-            if is_settings_window(hwnd) {
+            if is_application_window(hwnd) {
                 if let Some(app) = APP.get() {
                     if app.capturing_hotkey.load(Ordering::SeqCst) {
                         handle_capture_key(app, wparam as u32);
@@ -165,14 +165,14 @@ pub(crate) unsafe extern "system" fn wnd_proc(
         }
         WM_MOUSEMOVE => {
             continue_drag();
-            if !is_settings_window(hwnd) {
+            if !is_application_window(hwnd) {
                 let (x, y) = lparam_point(lparam);
                 bubble_mouse_move(hwnd, x, y);
             }
             0
         }
         WM_MOUSELEAVE => {
-            if !is_settings_window(hwnd) {
+            if !is_application_window(hwnd) {
                 bubble_mouse_leave(hwnd);
             }
             0
@@ -181,8 +181,8 @@ pub(crate) unsafe extern "system" fn wnd_proc(
             let (x, y) = lparam_point(lparam);
             let was_click = end_drag();
             if was_click {
-                if is_settings_window(hwnd) {
-                    handle_settings_click(x, y);
+                if is_application_window(hwnd) {
+                    handle_application_window_click(x, y);
                 } else {
                     handle_click(x, y);
                 }
@@ -191,7 +191,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
         }
         WM_TRAYICON => {
             match lparam as u32 {
-                WM_LBUTTONUP => toggle_settings_window(SettingsOrigin::Tray),
+                WM_LBUTTONUP => toggle_application_window(WindowOrigin::Tray),
                 WM_RBUTTONUP => show_tray_menu(hwnd),
                 _ => {}
             }
@@ -220,7 +220,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
         }
         WM_MOUSEWHEEL => {
             if let Some(app) = APP.get() {
-                if is_settings_window(hwnd) {
+                if is_application_window(hwnd) {
                     // high word of wparam: signed wheel delta, 120 per notch
                     let delta = ((wparam >> 16) & 0xFFFF) as u16 as i16 as i32;
                     let pixels = -delta * HISTORY_WHEEL_STEP / 120;
@@ -234,7 +234,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
             0
         }
         WM_UI_UPDATE => {
-            if is_settings_window(hwnd) {
+            if is_application_window(hwnd) {
                 InvalidateRect(hwnd, null(), 0);
             } else {
                 render_bubble(hwnd);

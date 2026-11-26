@@ -1,13 +1,13 @@
 ---
 name: operating
-description: Start an isolated test copy of Nemotron Bubble, open its settings window, click tabs, buttons and switches, scroll, pick popup-menu entries, take screenshots and read its settings and log. Use whenever a UI change of this app should be seen before and verified after, a reported UI issue reproduced, or a setting, download or menu flow checked in the running app. Never operates the user's own instance.
+description: Start an isolated test copy of Nemotron Bubble, open its application window, click tabs, buttons and switches, scroll, pick popup-menu entries, take screenshots and read its settings and log. Use whenever a UI change of this app should be seen before and verified after, a reported UI issue reproduced, or a setting, download or menu flow checked in the running app. Never operates the user's own instance.
 ---
 
 # Operating Nemotron Bubble
 
 The scripts let a model run a test copy of the app, look at it and click through it. Use them for every UI task: take a baseline screenshot first, make the change, then build, run and verify with a second screenshot. The README describes how to build. Machine-specific build setups (such as a WSL cross-build) may be described in local, untracked files under `.claude/rules/`, read them when they exist.
 
-All input is posted window messages. The mouse never moves and the scripts never activate a window. The app itself brings its settings window and popup menus to the front when they open, which the scripts cannot prevent.
+All input is posted window messages. The mouse never moves and the scripts never activate a window. The app itself brings its application window and popup menus to the front when they open, which the scripts cannot prevent.
 
 ## Workflow
 
@@ -47,11 +47,11 @@ $w = '<scratch>\nemotron-bubble\<chat>\app'
 | Script | Purpose |
 | --- | --- |
 | `Start-Nemotron.ps1` | `-WorkDir` (required), `-Build` (build and copy the exe into the work folder, works while the user's app runs: the local `scripts\build-wsl.ps1` when present, otherwise `cargo build --release`), `-Settings '<json>'` (merged into `config\settings.json`), `-UseModels [-ModelsDir <dir>]` (finds already downloaded models by starting in the folder that holds them, by default `target\wsl-release\models` or `models\`. Nothing is linked or copied.), `-NoStart`. Stops a previous instance of the same folder, waits for the bubble window, prints `PID <n>`. |
-| `Open-Settings.ps1` | Opens the settings window via the tray-click message (works with the bubble hidden), `-Close` closes it, `-Bubble` clicks the bubble instead. Idempotent. |
+| `Open-Window.ps1` | Opens the application window via the tray-click message (works with the bubble hidden), `-Close` closes it, `-Bubble` clicks the bubble instead. Idempotent. |
 | `Invoke-Target.ps1` | Clicks a named element (`-List` prints all). Opens the window, switches the tab and scrolls the Settings tab as needed. `-X -Y [-Tab]` clicks raw window pixels. |
 | `Send-Wheel.ps1` | Scrolls the active tab, `-Notches` positive is down. One notch is 60 px. |
 | `Select-MenuItem.ps1` | Picks an entry of the open popup menu: `-Index n` (Down n times, then Enter), `-Cancel`. `-Tray` opens the tray menu first, `-Right -SubIndex m` goes into a submenu. |
-| `Get-Screenshot.ps1` | Settings window via `PrintWindow` (no focus needed, no popups). `-Screen` adds open popup menus (screen capture). `-Window Bubble`, `-Delay <seconds>` (e.g. `0.5`, at most 60), `-Crop x,y,w,h`, `-Zoom n`. |
+| `Get-Screenshot.ps1` | Application window via `PrintWindow` (no focus needed, no popups). `-Screen` adds open popup menus (screen capture). `-Window Bubble`, `-Delay <seconds>` (e.g. `0.5`, at most 60), `-Crop x,y,w,h`, `-Zoom n`. |
 | `Get-State.ps1` | `config\settings.json`, the end of the log (`-Log n`, `-Grep`), `-WaitFor <regex> -Timeout s` waits for a new log line, `-Models` lists the model folders with version. |
 | `Stop-Nemotron.ps1` | Stops the test instance of a work folder. |
 | `Remove-WorkDir.ps1` | Stops the instance and deletes the work folder. It refuses when a link is inside, so linked data can never be deleted with it. |
@@ -67,15 +67,15 @@ $w = '<scratch>\nemotron-bubble\<chat>\app'
 | all | `Close`, `Tab:History`, `Tab:Model`, `Tab:Settings` |
 | History | `Trash` (clears the history without asking), `Copy:First` |
 | Model | `Processing:CPU/GPU/Auto`, `Model:English/Multilingual/Predefined`, `CheckForUpdates`, `Download:English/Multilingual` (whatever the row's button says: Download, Update, Resume, Retry, Cancel), `Language` (menu), `Toggle:Preload` |
-| Settings | `Shortcut`, `Microphone` (menu), `BubblePosition` (menu), `Toggle:StartWithWindows`, `Toggle:LiveType`, `Toggle:CopyFinal`, `Toggle:PasteFinal`, `Toggle:Sounds`, `Toggle:Waveform`, `Toggle:TrayAnimation`, `Toggle:EnterStops`, `Toggle:SilenceStop`, `Toggle:FloatingBubble`, `Toggle:BubbleClickOpensSettings` |
+| Settings | `Shortcut`, `Microphone` (menu), `BubblePosition` (menu), `Toggle:StartWithWindows`, `Toggle:LiveType`, `Toggle:CopyFinal`, `Toggle:PasteFinal`, `Toggle:Sounds`, `Toggle:Waveform`, `Toggle:TrayAnimation`, `Toggle:EnterStops`, `Toggle:SilenceStop`, `Toggle:FloatingBubble`, `Toggle:BubbleClickOpensWindow` |
 
-The coordinates mirror the layout constants in `src/ui/settings_window/*.rs`. **When a change moves, adds or removes an element, update `Targets.ps1` in the same change** and check the affected targets with a click and a screenshot.
+The coordinates mirror the layout constants in `src/ui/application_window/*.rs`. **When a change moves, adds or removes an element, update `Targets.ps1` in the same change** and check the affected targets with a click and a screenshot.
 
 ## Facts about the app
 
-- There are no UI Automation elements. Everything is custom-drawn into two windows of class `NemotronBubbleWindow`: the bubble (title "Nemotron Bubble", it also receives the tray icon's messages) and the settings window ("Nemotron Bubble Settings", 392 x 816, no frame, so window and client pixels are the same). The scripts always find them by process id, because the user's own instance has the same class and titles.
+- There are no UI Automation elements. Everything is custom-drawn into two windows of class `NemotronBubbleWindow`: the bubble (title "Nemotron Floating Bubble", it also receives the tray icon's messages) and the application window ("Nemotron Bubble", 392 x 816, no frame, so window and client pixels are the same). The scripts always find them by process id, because the user's own instance has the same class and titles.
 - A button-up without a preceding drag counts as a click. Popup menus (`TrackPopupMenu`) block the app until closed and only react to keys.
-- The settings window opens next to the bubble after a bubble click and next to the mouse cursor after a tray click.
+- The application window opens next to the bubble after a bubble click and next to the mouse cursor after a tray click.
 - The app applies `start_with_windows` at every start: true points the Windows autostart entry (`HKCU\...\Run\NemotronBubble`) at the running exe, false removes the entry only if it points to this exe. The default is false. `Start-Nemotron.ps1` forces it to false and afterwards restores the entry to what it was before the start, so a test never changes the user's autostart. If it reports a restore, say so.
 - `settings.json` is read as UTF-8 with or without BOM and as UTF-16 with BOM. The app always writes UTF-8 without BOM. A file that is not valid JSON makes the app log "settings.json is invalid", keep it as `.invalid` and run with its defaults (preload on). `Start-Nemotron.ps1` stops the instance if that happens.
 - A model that fails to load shows a message box on the user's screen. Keep `preload_model` false unless the test needs a loaded model and the models are linked.

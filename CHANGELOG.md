@@ -12,7 +12,7 @@ ___
 
 ### Added
 
-- Choice of the speech model (*English*, *Multilingual*, *Predefined*) in the settings window and the tray menu. On first start the installed model is selected automatically.
+- Choice of the speech model (*English*, *Multilingual*, *Predefined*) in the application window and the tray menu. On first start the installed model is selected automatically.
 - Language selection for the multilingual model. Besides *Auto-detect*, the 15 languages NVIDIA rates as transcription-ready are offered. A change applies instantly without reloading the model.
 - GPU processing via DirectML, which works with any DirectX 12 graphics adapter. The new *Processing* setting offers *CPU* (default), *GPU* and *Auto*.
 - Each history entry records the device and the average processing time per 560 ms audio chunk.
@@ -23,14 +23,15 @@ ___
 - A missing microphone is shown by the bubble (amber dot and a crossed-out microphone) and the tray icon (crossed out), and both give the reason in their tooltip. There is no message box at startup. The app checks every 3 seconds whether a microphone is back and picks it up on its own. Starting dictation without a microphone still shows a message.
 - A message for a model that fails to load.
 - The new `--self-test` parameter prints to the console and reports the device and the processing time per chunk.
-- The version is shown in the settings window, the tray menu and the file properties of the executable.
+- The version is shown in the application window, the tray menu and the file properties of the executable.
 - An icon for the executable.
 - Microphones that deliver samples in any integer format (8 to 64 bit) or as 64 bit floats are supported. Before, only 32 bit floats and 16 bit integers worked.
 - A close button on the floating bubble. It appears on the bubble's top-right edge while the mouse is over the bubble and quits the app like *Quit* in the tray menu.
 
 ### Changed
 
-- The main window is redesigned. It is about half as wide, splits into the tabs *History*, *Model* and *Settings*, and opens next to the bubble or the tray icon, depending on what was clicked. The close button is the Windows ✕.
+- The application window (formerly the settings window) is redesigned. It is about half as wide, splits into the tabs *History*, *Model* and *Settings*, and opens next to the bubble or the tray icon, depending on what was clicked. The close button is the Windows ✕.
+- The setting `bubble_click_opens_settings` in `settings.json` is renamed to `bubble_click_opens_window`, shown as *Bubble click opens window*. The old name is still read.
 - The history list is drawn by the app itself. Each entry has a copy icon and a smaller grey header line, and the list scrolls with the mouse wheel. A trash button replaces *Clear*, and *Copy Latest* is gone.
 - The *Settings* tab scrolls with the mouse wheel and shows a scrollbar, so the window keeps its height.
 - The app is portable. Settings, history and sounds are stored in `config\` and the logs in `log\` next to the exe instead of in `%APPDATA%`.

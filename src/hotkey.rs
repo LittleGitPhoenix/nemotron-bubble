@@ -73,7 +73,7 @@ pub(crate) fn hotkey_label(mods: u32, vk: u32) -> String {
 }
 
 /// Enter capture mode: free the current hotkey so the next chord arrives as
-/// WM_KEYDOWN, and pull keyboard focus to the settings window.
+/// WM_KEYDOWN, and pull keyboard focus to the application window.
 pub(crate) fn start_hotkey_capture(app: &Arc<AppState>) {
     app.capturing_hotkey.store(true, Ordering::SeqCst);
     unsafe {
@@ -81,7 +81,7 @@ pub(crate) fn start_hotkey_capture(app: &Arc<AppState>) {
         if bubble != null_mut() {
             UnregisterHotKey(bubble, HOTKEY_ID);
         }
-        let settings = settings_hwnd_from_app(app);
+        let settings = application_window_hwnd_from_app(app);
         if settings != null_mut() {
             SetFocus(settings);
         }

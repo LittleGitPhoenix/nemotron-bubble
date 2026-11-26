@@ -129,7 +129,7 @@ pub(crate) fn report_model_error(err: &anyhow::Error) {
     notify_user(
         "Nemotron Bubble: speech model failed to load",
         &format!(
-            "{message}\n\nYou can choose the speech model in the settings window.\n\n\
+            "{message}\n\nYou can choose the speech model in the application window.\n\n\
              Log file: {}",
             log_path().display()
         ),
@@ -307,7 +307,7 @@ pub(crate) fn check_model_files(model_dir: &std::path::Path) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!(
-            "Model files in {} are not usable:\n  - {}\nDownload the model again on the Model tab of the settings window.",
+            "Model files in {} are not usable:\n  - {}\nDownload the model again on the Model tab of the application window.",
             model_dir.display(),
             problems.join("\n  - ")
         ))
@@ -412,10 +412,10 @@ pub(crate) fn find_model_dir(choice: ModelChoice, configured_dir: &str) -> Resul
 
     let hint = if choice == ModelChoice::Multilingual {
         "The multilingual model is not installed. Download it on the Model tab of the \
-         settings window, or pick another model there.\n\n"
+         application window, or pick another model there.\n\n"
     } else {
         "The English model is not installed. Download it on the Model tab of the \
-         settings window, or pick another model there.\n\n"
+         application window, or pick another model there.\n\n"
     };
     Err(anyhow!(
         "{hint}Expected Nemotron ONNX files in one of these folders:\n{}",

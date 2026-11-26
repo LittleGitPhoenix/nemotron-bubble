@@ -73,16 +73,16 @@ pub(crate) fn handle_click(x: i32, y: i32) {
         handle_command(IDM_QUIT);
         return;
     }
-    if settings_snapshot(app).bubble_click_opens_settings {
-        toggle_settings_window(SettingsOrigin::Bubble);
+    if settings_snapshot(app).bubble_click_opens_window {
+        toggle_application_window(WindowOrigin::Bubble);
     } else {
         toggle_recording();
     }
 }
 
 pub(crate) fn should_start_drag(hwnd: HWND, x: i32, y: i32) -> bool {
-    if is_settings_window(hwnd) {
-        y < 84 && !settings_close_rect().contains(x, y)
+    if is_application_window(hwnd) {
+        y < 84 && !close_button_rect().contains(x, y)
     } else {
         true
     }

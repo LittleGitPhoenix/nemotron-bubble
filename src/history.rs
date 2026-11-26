@@ -85,12 +85,12 @@ pub(crate) fn add_history(app: &Arc<AppState>, text: String, stats: Option<Dicta
 }
 
 /// After the history changed: scroll back to the newest entry and repaint the
-/// settings window (posted, so this is safe from the engine thread too).
+/// application window (posted, so this is safe from the engine thread too).
 pub(crate) fn refresh_history_view(app: &Arc<AppState>) {
     app.history_scroll.store(0, Ordering::SeqCst);
     *app.copied_flash.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     unsafe {
-        let hwnd = settings_hwnd_from_app(app);
+        let hwnd = application_window_hwnd_from_app(app);
         if hwnd != null_mut() {
             PostMessageW(hwnd, WM_UI_UPDATE, 0, 0);
         }
@@ -102,7 +102,7 @@ pub(crate) fn copy_history_item(app: &Arc<AppState>, index: usize) {
     let Some(item) = history_snapshot(app).get(index).cloned() else {
         return;
     };
-    let hwnd = settings_hwnd_from_app(app);
+    let hwnd = application_window_hwnd_from_app(app);
     match set_clipboard_text(&item.text, hwnd) {
         Ok(()) => {
             *app.copied_flash.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(index);
@@ -126,7 +126,7 @@ pub(crate) fn scroll_history(app: &Arc<AppState>, delta: i32) {
     if new != old {
         app.history_scroll.store(new, Ordering::SeqCst);
         unsafe {
-            let hwnd = settings_hwnd_from_app(app);
+            let hwnd = application_window_hwnd_from_app(app);
             if hwnd != null_mut() {
                 InvalidateRect(hwnd, null(), 0);
             }

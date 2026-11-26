@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-	Clicks a named element of the settings window of a test instance (see Targets.ps1, -List prints all names).
+	Clicks a named element of the application window of a test instance (see Targets.ps1, -List prints all names).
 .DESCRIPTION
-	Opens the settings window if needed (via the tray icon message, so it works with the bubble hidden), switches to
+	Opens the application window if needed (via the tray icon message, so it works with the bubble hidden), switches to
 	the element's tab and, on the Settings tab, scrolls so the element is visible. Then it posts the click.
-	No mouse movement, no focus change by the script. Note that the app itself brings its settings window and popup
+	No mouse movement, no focus change by the script. Note that the app itself brings its application window and popup
 	menus to the front.
 	-X/-Y click raw window pixels instead (same origin as Get-Screenshot.ps1), for elements without a name such as
 	further copy icons in the History list. -Tab switches to a tab before such a raw click.
@@ -29,8 +29,8 @@ if ($List)
 }
 if (-not $ProcessId) { throw '-ProcessId is required.' }
 
-& "$PSScriptRoot\Open-Settings.ps1" -ProcessId $ProcessId | Out-Null
-$settings = Get-NemoWindow $ProcessId 'Settings'
+& "$PSScriptRoot\Open-Window.ps1" -ProcessId $ProcessId | Out-Null
+$window = Get-NemoWindow $ProcessId 'Application'
 
 # -Tab is validated, so the target's tab (empty for frame targets) goes into its own variable.
 $clickTab = $Tab
@@ -47,15 +47,15 @@ if ($Target)
 if ($clickTab)
 {
 	$tabTarget = $script:Targets["Tab:$clickTab"]
-	Send-NemoClick $settings $tabTarget.X $tabTarget.Y
+	Send-NemoClick $window $tabTarget.X $tabTarget.Y
 }
 if ($Target -and $clickTab -eq 'Settings')
 {
 	# Scroll to a known offset: the top, or the bottom for rows below the visible card.
-	if ($clickY -lt $script:SettingsViewBottom - 20) { Send-NemoWheel $settings -3 }
-	else { Send-NemoWheel $settings 3; $clickY -= $script:SettingsTabMaxScroll }
+	if ($clickY -lt $script:SettingsViewBottom - 20) { Send-NemoWheel $window -3 }
+	else { Send-NemoWheel $window 3; $clickY -= $script:SettingsTabMaxScroll }
 }
-Send-NemoClick $settings $clickX $clickY
+Send-NemoClick $window $clickX $clickY
 $X = $clickX
 $Y = $clickY
 "clicked $(if ($Target) { $Target } else { 'raw' }) at $X,$Y"

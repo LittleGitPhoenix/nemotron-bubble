@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-	Takes a screenshot of a test instance's settings window or bubble.
+	Takes a screenshot of a test instance's application window or bubble.
 .DESCRIPTION
-	Default: the settings window via PrintWindow. That works when it is covered and needs no focus, but it does not
+	Default: the application window via PrintWindow. That works when it is covered and needs no focus, but it does not
 	include popup menus. Its pixels have the same origin as Invoke-Target.ps1 -X/-Y.
-	-Screen: a screen capture of the settings window united with the open popup menus. The app keeps both topmost.
+	-Screen: a screen capture of the application window united with the open popup menus. The app keeps both topmost.
 	-Window Bubble: the floating bubble. It is a layered window, so it is always captured from the screen.
 	-Delay waits that many seconds first (animations, a running download). -Crop x,y,w,h and -Zoom n cut out and enlarge a detail.
 #>
@@ -12,7 +12,7 @@ param
 (
 	[Parameter(Mandatory)][int]$ProcessId,
 	[Parameter(Mandatory)][string]$Out,
-	[ValidateSet('Settings', 'Bubble')][string]$Window = 'Settings',
+	[ValidateSet('Application', 'Bubble')][string]$Window = 'Application',
 	[switch]$Screen,
 	[ValidateRange(0, 60)][double]$Delay = 0, # Seconds, not milliseconds.
 	[int[]]$Crop,
@@ -26,13 +26,13 @@ $directory = Split-Path $Out
 if ($directory -and -not (Test-Path $directory)) { New-Item -ItemType Directory -Path $directory | Out-Null }
 
 $handle = Get-NemoWindow $ProcessId $Window
-if (-not [NemoNative]::IsWindowVisible($handle)) { throw "The $Window window is not visible. Open-Settings.ps1 opens the settings window." }
+if (-not [NemoNative]::IsWindowVisible($handle)) { throw "The $Window window is not visible. Open-Window.ps1 opens the application window." }
 $rect = Get-NemoRect $handle
 
 if ($Screen -or $Window -eq 'Bubble')
 {
 	$left = $rect.L; $top = $rect.T; $right = $rect.R; $bottom = $rect.B
-	if ($Window -eq 'Settings')
+	if ($Window -eq 'Application')
 	{
 		foreach ($menu in Get-NemoMenus $ProcessId)
 		{

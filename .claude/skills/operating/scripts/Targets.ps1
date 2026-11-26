@@ -1,5 +1,5 @@
-# Named click targets of the settings window: tab and center point in window pixels.
-# They mirror the layout constants in src/ui/settings_window/*.rs (window 392 x 816).
+# Named click targets of the application window: tab and center point in window pixels.
+# They mirror the layout constants in src/ui/application_window/*.rs (window 392 x 816).
 # UPDATE THIS TABLE WHENEVER THE LAYOUT CHANGES, then check each changed entry with a screenshot.
 #
 # Settings tab entries are in content coordinates (the position at scroll offset 0). That tab
@@ -42,7 +42,7 @@ $script:Targets = [ordered]@{
 # switch center 22 px below the row top.
 $toggleNames = @(
 	'StartWithWindows', 'LiveType', 'CopyFinal', 'PasteFinal', 'Sounds', 'Waveform',
-	'TrayAnimation', 'EnterStops', 'SilenceStop', 'FloatingBubble', 'BubbleClickOpensSettings'
+	'TrayAnimation', 'EnterStops', 'SilenceStop', 'FloatingBubble', 'BubbleClickOpensWindow'
 )
 for ($i = 0; $i -lt $toggleNames.Count; $i++)
 {

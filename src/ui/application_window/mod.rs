@@ -1,4 +1,4 @@
-//! The settings window: frame (header, tab bar, card, version), placement and the
+//! The application window: frame (header, tab bar, card, version), placement and the
 //! dispatch of painting and clicks to the active tab.
 
 mod history_tab;
@@ -13,20 +13,20 @@ pub(crate) use widgets::*;
 
 use crate::*;
 
-// Settings window: header, a tab bar (History | Model | Settings) and one card
+// Application window: header, a tab bar (History | Model | Settings) and one card
 // that shows the active tab. The width fits one column of settings rows.
-pub(crate) const SETTINGS_WIDTH: i32 = 392;
-pub(crate) const SETTINGS_HEIGHT: i32 = 816;
+pub(crate) const WINDOW_WIDTH: i32 = 392;
+pub(crate) const WINDOW_HEIGHT: i32 = 816;
 // Space below the card; holds the version label at the bottom right.
-pub(crate) const SETTINGS_FOOTER_H: i32 = 36;
-pub(crate) const SETTINGS_CARD_LEFT: i32 = 20;
-pub(crate) const SETTINGS_CARD_TOP: i32 = 118;
+pub(crate) const WINDOW_FOOTER_H: i32 = 36;
+pub(crate) const WINDOW_CARD_LEFT: i32 = 20;
+pub(crate) const WINDOW_CARD_TOP: i32 = 118;
 // Content area inside the card.
-pub(crate) const SETTINGS_INNER_LEFT: i32 = 40;
-pub(crate) const SETTINGS_INNER_RIGHT: i32 = SETTINGS_WIDTH - 40;
-pub(crate) const SETTINGS_TAB_TOP: i32 = 78;
-pub(crate) const SETTINGS_TAB_BOTTOM: i32 = 108;
-pub(crate) const SETTINGS_TABS: [&str; 3] = ["History", "Model", "Settings"];
+pub(crate) const WINDOW_INNER_LEFT: i32 = 40;
+pub(crate) const WINDOW_INNER_RIGHT: i32 = WINDOW_WIDTH - 40;
+pub(crate) const TAB_BAR_TOP: i32 = 78;
+pub(crate) const TAB_BAR_BOTTOM: i32 = 108;
+pub(crate) const TAB_LABELS: [&str; 3] = ["History", "Model", "Settings"];
 pub(crate) const TAB_HISTORY: usize = 0;
 pub(crate) const TAB_MODEL: usize = 1;
 pub(crate) const TAB_SETTINGS: usize = 2;
@@ -39,16 +39,16 @@ pub(crate) const SETTINGS_TOGGLE_FINAL_CLIPBOARD: usize = 2004;
 pub(crate) const SETTINGS_TOGGLE_FINAL_PASTE: usize = 2005;
 pub(crate) const SETTINGS_TOGGLE_SOUNDS: usize = 2006;
 pub(crate) const SETTINGS_TOGGLE_WAVEFORM: usize = 2007;
-pub(crate) const SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS: usize = 2008;
+pub(crate) const SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW: usize = 2008;
 pub(crate) const SETTINGS_TOGGLE_FLOATING_BUBBLE: usize = 2009;
 pub(crate) const SETTINGS_TOGGLE_TRAY_WAVEFORM: usize = 2010;
 pub(crate) const SETTINGS_TOGGLE_ENTER_STOPS: usize = 2011;
 pub(crate) const SETTINGS_TOGGLE_SILENCE_STOP: usize = 2012;
 
-/// Show `menu` below a button of the settings window and destroy it afterwards.
+/// Show `menu` below a button of the application window and destroy it afterwards.
 /// The choice arrives as WM_COMMAND and is handled by handle_command.
 pub(crate) unsafe fn show_menu_below(app: &Arc<AppState>, menu: HMENU, button: RectI) {
-    let hwnd = settings_hwnd_from_app(app);
+    let hwnd = application_window_hwnd_from_app(app);
     if hwnd == null_mut() || menu == null_mut() {
         if menu != null_mut() {
             DestroyMenu(menu);
@@ -117,10 +117,10 @@ pub(crate) fn setting_rows(settings: &AppSettings) -> Vec<SettingRow> {
             enabled: settings.waveform_enabled,
         },
         SettingRow {
-            id: SETTINGS_TOGGLE_BUBBLE_CLICK_SETTINGS,
-            title: "Bubble click opens settings",
+            id: SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW,
+            title: "Bubble click opens window",
             detail: "Off makes a bubble click toggle recording.",
-            enabled: settings.bubble_click_opens_settings,
+            enabled: settings.bubble_click_opens_window,
         },
         SettingRow {
             id: SETTINGS_TOGGLE_FLOATING_BUBBLE,
@@ -149,7 +149,7 @@ pub(crate) fn setting_rows(settings: &AppSettings) -> Vec<SettingRow> {
     ]
 }
 
-pub(crate) unsafe fn paint_settings(hwnd: HWND) {
+pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
     let Some(app) = APP.get() else {
         return;
     };
@@ -162,7 +162,7 @@ pub(crate) unsafe fn paint_settings(hwnd: HWND) {
     }
     let capturing = app.capturing_hotkey.load(Ordering::SeqCst);
     let model_status = lock_ui(app).model_status.clone();
-    if let Some(mut canvas) = Canvas::new(SETTINGS_WIDTH, SETTINGS_HEIGHT) {
+    if let Some(mut canvas) = Canvas::new(WINDOW_WIDTH, WINDOW_HEIGHT) {
         let tab = app.settings_tab.load(Ordering::SeqCst);
         let items = history_snapshot(app);
         let view = HistoryView {
@@ -175,7 +175,7 @@ pub(crate) unsafe fn paint_settings(hwnd: HWND) {
             microphone_in_use: open_microphone_name(),
         };
         let downloads = downloads_snapshot(app);
-        let layout = render_settings_canvas(&mut canvas, &settings, &model_status, &view, &settings_view, &downloads, capturing, tab);
+        let layout = render_application_window(&mut canvas, &settings, &model_status, &view, &settings_view, &downloads, capturing, tab);
         canvas.blit_to(hdc);
         // Remember what the list looked like, for clicks and wheel scrolling.
         app.history_content_h.store(layout.content_h, Ordering::SeqCst);
@@ -187,23 +187,23 @@ pub(crate) unsafe fn paint_settings(hwnd: HWND) {
     EndPaint(hwnd, &ps);
 }
 
-/// What opened the settings window; decides where it appears.
+/// What opened the application window; decides where it appears.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SettingsOrigin {
+pub(crate) enum WindowOrigin {
     /// A click on the floating bubble: open next to the bubble.
     Bubble,
     /// A click on the tray icon: open next to the tray (at the cursor).
     Tray,
 }
 
-/// Position the settings window next to what opened it, kept inside that
+/// Position the application window next to what opened it, kept inside that
 /// monitor's work area: above the anchor when it is in the lower half of the
 /// screen (bubble at the bottom, taskbar at the bottom), otherwise below it.
-pub(crate) unsafe fn place_settings_window(hwnd: HWND, origin: SettingsOrigin) {
+pub(crate) unsafe fn place_application_window(hwnd: HWND, origin: WindowOrigin) {
     const GAP: i32 = 8;
     // Anchor rectangle: the bubble's pill, or a point at the cursor (tray click).
     let anchor = match origin {
-        SettingsOrigin::Bubble => {
+        WindowOrigin::Bubble => {
             let bubble = APP.get().map(|app| hwnd_from_app(app)).unwrap_or(null_mut());
             let mut rect: RECT = std::mem::zeroed();
             if bubble != null_mut() && IsWindowVisible(bubble) != 0 && GetWindowRect(bubble, &mut rect) != 0 {
@@ -218,7 +218,7 @@ pub(crate) unsafe fn place_settings_window(hwnd: HWND, origin: SettingsOrigin) {
                 cursor_rect()
             }
         }
-        SettingsOrigin::Tray => cursor_rect(),
+        WindowOrigin::Tray => cursor_rect(),
     };
     let center = POINT {
         x: (anchor.left + anchor.right) / 2,
@@ -226,16 +226,16 @@ pub(crate) unsafe fn place_settings_window(hwnd: HWND, origin: SettingsOrigin) {
     };
     let work = work_area(Some(center));
 
-    let x = (center.x - SETTINGS_WIDTH / 2)
-        .min(work.right - SETTINGS_WIDTH - GAP)
+    let x = (center.x - WINDOW_WIDTH / 2)
+        .min(work.right - WINDOW_WIDTH - GAP)
         .max(work.left + GAP);
     let in_lower_half = center.y > (work.top + work.bottom) / 2;
     let y = if in_lower_half {
-        anchor.top - SETTINGS_HEIGHT - GAP
+        anchor.top - WINDOW_HEIGHT - GAP
     } else {
         anchor.bottom + GAP
     }
-    .min(work.bottom - SETTINGS_HEIGHT - GAP)
+    .min(work.bottom - WINDOW_HEIGHT - GAP)
     .max(work.top + GAP);
 
     SetWindowPos(
@@ -243,26 +243,26 @@ pub(crate) unsafe fn place_settings_window(hwnd: HWND, origin: SettingsOrigin) {
         HWND_TOPMOST,
         x,
         y,
-        SETTINGS_WIDTH,
-        SETTINGS_HEIGHT,
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
         SWP_NOACTIVATE,
     );
 }
 
-pub(crate) unsafe fn apply_settings_rounding(hwnd: HWND) {
-    let region = CreateRoundRectRgn(0, 0, SETTINGS_WIDTH + 1, SETTINGS_HEIGHT + 1, 18, 18);
+pub(crate) unsafe fn apply_application_window_rounding(hwnd: HWND) {
+    let region = CreateRoundRectRgn(0, 0, WINDOW_WIDTH + 1, WINDOW_HEIGHT + 1, 18, 18);
     if region != null_mut() {
         SetWindowRgn(hwnd, region, 1);
     }
 }
 
-/// Open the settings window if hidden, close it if already showing.
-pub(crate) fn toggle_settings_window(origin: SettingsOrigin) {
+/// Open the application window if hidden, close it if already showing.
+pub(crate) fn toggle_application_window(origin: WindowOrigin) {
     let Some(app) = APP.get() else {
         return;
     };
     unsafe {
-        let hwnd = settings_hwnd_from_app(app);
+        let hwnd = application_window_hwnd_from_app(app);
         if hwnd == null_mut() {
             return;
         }
@@ -270,44 +270,44 @@ pub(crate) fn toggle_settings_window(origin: SettingsOrigin) {
             cancel_hotkey_capture(app);
             ShowWindow(hwnd, SW_HIDE);
         } else {
-            place_settings_window(hwnd, origin);
+            place_application_window(hwnd, origin);
             ShowWindow(hwnd, SW_SHOW);
             SetForegroundWindow(hwnd);
         }
     }
 }
 
-pub(crate) fn is_settings_window(hwnd: HWND) -> bool {
+pub(crate) fn is_application_window(hwnd: HWND) -> bool {
     APP.get()
-        .map(|app| hwnd == settings_hwnd_from_app(app))
+        .map(|app| hwnd == application_window_hwnd_from_app(app))
         .unwrap_or(false)
 }
 
 /// The close "X" in the top-right corner of the header.
-pub(crate) fn settings_close_rect() -> RectI {
+pub(crate) fn close_button_rect() -> RectI {
     RectI {
-        left: SETTINGS_WIDTH - 54,
+        left: WINDOW_WIDTH - 54,
         top: 18,
-        right: SETTINGS_WIDTH - 14,
+        right: WINDOW_WIDTH - 14,
         bottom: 50,
     }
 }
 
 /// One tab of the tab bar (History | Model | Settings), spanning the card width.
 pub(crate) fn settings_tab_rect(tab: usize) -> RectI {
-    let width = (SETTINGS_WIDTH - 2 * SETTINGS_CARD_LEFT) / SETTINGS_TABS.len() as i32;
-    let left = SETTINGS_CARD_LEFT + tab as i32 * width;
+    let width = (WINDOW_WIDTH - 2 * WINDOW_CARD_LEFT) / TAB_LABELS.len() as i32;
+    let left = WINDOW_CARD_LEFT + tab as i32 * width;
     RectI {
         left,
-        top: SETTINGS_TAB_TOP,
+        top: TAB_BAR_TOP,
         right: left + width,
-        bottom: SETTINGS_TAB_BOTTOM,
+        bottom: TAB_BAR_BOTTOM,
     }
 }
 
 /// The row of a toggle setting: Preload sits on the Model tab, all others on
 /// the Settings tab below the shortcut row.
-pub(crate) fn settings_toggle_rect(id: usize) -> RectI {
+pub(crate) fn toggle_rect(id: usize) -> RectI {
     let top = if id == SETTINGS_TOGGLE_PRELOAD {
         PRELOAD_ROW_TOP
     } else {
@@ -317,16 +317,16 @@ pub(crate) fn settings_toggle_rect(id: usize) -> RectI {
     RectI {
         left: 32,
         top,
-        right: SETTINGS_WIDTH - 36,
+        right: WINDOW_WIDTH - 36,
         bottom: top + 44,
     }
 }
 
-/// Switch the settings window to `tab`.
+/// Switch the application window to `tab`.
 pub(crate) fn set_settings_tab(app: &Arc<AppState>, tab: usize) {
     app.settings_tab.store(tab, Ordering::SeqCst);
     unsafe {
-        let hwnd = settings_hwnd_from_app(app);
+        let hwnd = application_window_hwnd_from_app(app);
         if hwnd != null_mut() {
             InvalidateRect(hwnd, null(), 0);
         }
@@ -334,7 +334,7 @@ pub(crate) fn set_settings_tab(app: &Arc<AppState>, tab: usize) {
 }
 
 
-pub(crate) fn handle_settings_click(x: i32, y: i32) {
+pub(crate) fn handle_application_window_click(x: i32, y: i32) {
     let Some(app) = APP.get() else {
         return;
     };
@@ -350,9 +350,9 @@ pub(crate) fn handle_settings_click(x: i32, y: i32) {
         cancel_hotkey_capture(app);
     }
 
-    if settings_close_rect().contains(x, y) {
+    if close_button_rect().contains(x, y) {
         unsafe {
-            let hwnd = settings_hwnd_from_app(app);
+            let hwnd = application_window_hwnd_from_app(app);
             if hwnd != null_mut() {
                 ShowWindow(hwnd, SW_HIDE);
             }
@@ -360,7 +360,7 @@ pub(crate) fn handle_settings_click(x: i32, y: i32) {
         return;
     }
 
-    for index in 0..SETTINGS_TABS.len() {
+    for index in 0..TAB_LABELS.len() {
         if settings_tab_rect(index).contains(x, y) {
             set_settings_tab(app, index);
             return;
@@ -374,11 +374,11 @@ pub(crate) fn handle_settings_click(x: i32, y: i32) {
     }
 }
 
-/// Render the entire settings surface into a canvas: the frame (header, tab bar,
+/// Render the entire application window into a canvas: the frame (header, tab bar,
 /// card, version footer) and the content of the active `tab`. Returns the layout
 /// of the History list (copy-icon hit areas, content height), which is empty for
 /// the other tabs.
-pub(crate) unsafe fn render_settings_canvas(
+pub(crate) unsafe fn render_application_window(
     canvas: &mut Canvas,
     settings: &AppSettings,
     model_status: &str,
@@ -391,10 +391,10 @@ pub(crate) unsafe fn render_settings_canvas(
     let rows = setting_rows(settings);
     let cw = canvas.w;
     let ch = canvas.h;
-    let card_left = SETTINGS_CARD_LEFT as f32;
-    let card_top = SETTINGS_CARD_TOP as f32;
-    let card_w = (cw - 2 * SETTINGS_CARD_LEFT) as f32;
-    let card_h = (ch - SETTINGS_CARD_TOP - SETTINGS_FOOTER_H) as f32;
+    let card_left = WINDOW_CARD_LEFT as f32;
+    let card_top = WINDOW_CARD_TOP as f32;
+    let card_w = (cw - 2 * WINDOW_CARD_LEFT) as f32;
+    let card_h = (ch - WINDOW_CARD_TOP - WINDOW_FOOTER_H) as f32;
 
     // History list geometry: measure first (needs the DC), then draw.
     let mut list = if tab == TAB_HISTORY {
@@ -410,7 +410,7 @@ pub(crate) unsafe fn render_settings_canvas(
         fill_round_rect(buf, cw, ch, 28.0, 26.0, 4.0, 32.0, 2.0, (110, 162, 255), (84, 138, 250), 1.0);
 
         // tab bar: thin baseline, accent underline below the active tab
-        let base_y = SETTINGS_TAB_BOTTOM as f32;
+        let base_y = TAB_BAR_BOTTOM as f32;
         fill_round_rect(buf, cw, ch, card_left, base_y - 1.0, card_w, 1.0, 0.0, (44, 48, 58), (44, 48, 58), 1.0);
         let active = settings_tab_rect(tab);
         let underline_w = 56.0;
@@ -438,11 +438,11 @@ pub(crate) unsafe fn render_settings_canvas(
     // close: the ChromeClose glyph of the Windows icon font, like a title bar's X
     SelectObject(dc, icon_font() as _);
     SetTextColor(dc, rgb(205, 212, 224));
-    text_center(dc, GLYPH_CLOSE, settings_close_rect());
+    text_center(dc, GLYPH_CLOSE, close_button_rect());
 
     // tab labels
     SelectObject(dc, ui_font() as _);
-    for (index, label) in SETTINGS_TABS.iter().enumerate() {
+    for (index, label) in TAB_LABELS.iter().enumerate() {
         if index == tab {
             SetTextColor(dc, rgb(245, 248, 252));
         } else {
@@ -466,9 +466,9 @@ pub(crate) unsafe fn render_settings_canvas(
         &format!("Version {APP_VERSION}"),
         RectI {
             left: cw - 236,
-            top: ch - SETTINGS_FOOTER_H + 10,
+            top: ch - WINDOW_FOOTER_H + 10,
             right: cw - 34,
-            bottom: ch - SETTINGS_FOOTER_H + 28,
+            bottom: ch - WINDOW_FOOTER_H + 28,
         },
     );
 
