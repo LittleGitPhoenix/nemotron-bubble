@@ -51,7 +51,7 @@ $w = '<scratch>\nemotron-bubble\<chat>\app'
 | `Invoke-Target.ps1` | Clicks a named element (`-List` prints all). Opens the window, switches the tab and scrolls the Settings tab as needed. `-X -Y [-Tab]` clicks raw window pixels. |
 | `Send-Wheel.ps1` | Scrolls the active tab, `-Notches` positive is down. One notch is 60 px. |
 | `Select-MenuItem.ps1` | Picks an entry of the open popup menu: `-Index n` (Down n times, then Enter), `-Cancel`. `-Tray` opens the tray menu first, `-Right -SubIndex m` goes into a submenu. |
-| `Get-Screenshot.ps1` | Settings window via `PrintWindow` (no focus needed, no popups). `-Screen` adds open popup menus (screen capture). `-Window Bubble`, `-Delay`, `-Crop x,y,w,h`, `-Zoom n`. |
+| `Get-Screenshot.ps1` | Settings window via `PrintWindow` (no focus needed, no popups). `-Screen` adds open popup menus (screen capture). `-Window Bubble`, `-Delay <seconds>` (e.g. `0.5`, at most 60), `-Crop x,y,w,h`, `-Zoom n`. |
 | `Get-State.ps1` | `config\settings.json`, the end of the log (`-Log n`, `-Grep`), `-WaitFor <regex> -Timeout s` waits for a new log line, `-Models` lists the model folders with version. |
 | `Stop-Nemotron.ps1` | Stops the test instance of a work folder. |
 | `Remove-WorkDir.ps1` | Stops the instance and deletes the work folder. It refuses when a link is inside, so linked data can never be deleted with it. |
