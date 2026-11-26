@@ -191,13 +191,13 @@ Right-click the tray icon to open it.
 
 | Entry | Meaning |
 | --- | --- |
+| Version | The installed version, for information only. |
 | **Start** / **Stop** | Starts or stops the dictation, like the shortcut. |
 | **Show / Hide Bubble** | Hides or shows the floating bubble until the next start. The *Show floating bubble* setting stays unchanged. |
 | **Speech model** ▸ | The same choice as on the [*Model*](#speech-model) tab. Locked while dictating. |
 | **Language** ▸ | The spoken language for the multilingual model, as on the [*Model*](#language-multilingual-model) tab. |
 | **Processing** ▸ | CPU, GPU or Auto, as on the [*Model*](#processing-gpu-or-cpu) tab. |
 | **Quit** | Quits the app. |
-| Version | The installed version, for information only. |
 
 ___
 
