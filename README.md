@@ -23,7 +23,9 @@ This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike
 | **Model downloads in the app** | Download, resume and update both models on the *Model* tab instead of with a PowerShell script. Every file is verified with SHA-256, and the date of the model version is shown. |
 | **GPU support** | Run the model on the GPU via DirectML, which works with any DirectX 12 graphics adapter, or stay on the CPU. *Auto* tries the GPU first. |
 | **Language selection** | Tell the multilingual model which language you speak instead of letting it guess. 15 languages are offered, and NVIDIA rates this as more accurate than auto-detection. |
-| **Clear error feedback** | A missing microphone is shown by the bubble and the tray icon, and a model that fails to load shows a message, instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
+| **Microphone status at a glance** | Without a microphone the app keeps running instead of quitting. The bubble shows an amber dot and a crossed-out microphone, the tray icon is crossed out, and both tell the reason on hover. A microphone that is connected later is picked up automatically. |
+| **Close from the bubble** | A ✕ appears on the bubble's top-right edge while the mouse is over it and quits the app, so the tray menu is no longer the only way out. |
+| **Clear error feedback** | A model that fails to load shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
 | **Portable** | Settings, history and logs are stored next to the exe instead of in `%APPDATA%`. |
 | **App icon and version** | The exe has its own icon, and the version is shown in the settings window, the tray menu and the file properties. |
 
