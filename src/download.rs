@@ -441,6 +441,7 @@ pub(crate) fn start_model_download(app: &Arc<AppState>, choice: ModelChoice) {
         state.error = None;
     });
     repaint_settings(app);
+    clear_model_notice(app);
     set_status(app, format!("Downloading the {} model...", choice.label()));
 
     let app = app.clone();
@@ -458,7 +459,11 @@ pub(crate) fn start_model_download(app: &Arc<AppState>, choice: ModelChoice) {
                     }
                     None => {
                         log_info(&format!("{} model downloaded", choice.label()));
-                        set_status(&app, format!("The {} model is downloaded.", choice.label()));
+                        if adopt_downloaded_model(&app, choice) {
+                            set_status(&app, format!("The {} model is downloaded and selected.", choice.label()));
+                        } else {
+                            set_status(&app, format!("The {} model is downloaded.", choice.label()));
+                        }
                     }
                 }
             }
@@ -475,6 +480,23 @@ pub(crate) fn start_model_download(app: &Arc<AppState>, choice: ModelChoice) {
         set_activity(&app, index, DownloadActivity::Idle);
         refresh_local_model_state(&app);
     });
+}
+
+/// Select the just downloaded model `choice` when the selected model cannot be
+/// used because it is not installed, so the first download works without
+/// another click. A Predefined choice is left alone. Returns true when selected.
+fn adopt_downloaded_model(app: &Arc<AppState>, choice: ModelChoice) -> bool {
+    let settings = settings_snapshot(app);
+    if settings.model == choice || selected_model_notice(&settings).is_none() {
+        return false;
+    }
+    log_info(&format!(
+        "The selected {} model is not installed, selecting the downloaded {} model",
+        settings.model.label(),
+        choice.label()
+    ));
+    select_model(app, choice);
+    settings_snapshot(app).model == choice
 }
 
 /// Ask a running download to stop. Its partial files are kept for resuming.

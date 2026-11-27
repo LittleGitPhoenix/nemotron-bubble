@@ -39,12 +39,17 @@ pub(crate) fn select_model(app: &Arc<AppState>, choice: ModelChoice) {
     if settings.preload_model {
         let _ = app.engine_tx.send(EngineCommand::Preload);
     }
+    // A shown notice follows the new choice: gone once an installed model is selected.
+    let notice = selected_model_notice(&settings);
     update_ui(app, |ui| {
         ui.status = if settings.preload_model {
             format!("Switching to {} model...", choice.label())
         } else {
             format!("{} model selected. Loads on first dictation.", choice.label())
         };
+        if ui.model_notice.is_some() {
+            ui.model_notice = notice;
+        }
     });
 }
 
@@ -125,7 +130,26 @@ pub(crate) fn select_language(app: &Arc<AppState>, code: &'static str) {
     });
 }
 
-pub(crate) fn report_model_error(err: &anyhow::Error) {
+/// The texts for the application window after a failed model load.
+pub(crate) struct ModelErrorStatus {
+    /// The status line under the window title.
+    pub(crate) status: String,
+    /// The model state on the Model tab.
+    pub(crate) model_status: String,
+}
+
+/// Tell the user why the model did not load. A model that is simply not
+/// installed opens the Model tab with an annotation that explains what to do,
+/// every other failure shows an error message with the details. Returns the
+/// matching texts for the window.
+pub(crate) fn report_model_error(app: &Arc<AppState>, err: &anyhow::Error) -> ModelErrorStatus {
+    if let Some(missing) = err.downcast_ref::<ModelNotInstalled>() {
+        log_info(&missing.to_string());
+        let notice = model_notice_for(missing.choice);
+        show_model_notice(app, notice);
+        return notice.status();
+    }
+
     let message = format!("{err:#}");
     log_error(&format!("Nemotron model failed to load: {message}"));
     notify_user(
@@ -137,7 +161,122 @@ pub(crate) fn report_model_error(err: &anyhow::Error) {
         ),
         MB_ICONERROR,
     );
+    ModelErrorStatus {
+        status: "The speech model failed to load. See the log.".to_string(),
+        model_status: "Failed to load - see log.".to_string(),
+    }
 }
+
+/// Why the selected speech model cannot be used, shown as an annotation over
+/// the Model tab of the application window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModelNotice {
+    /// No speech model is installed at all, e.g. on the first start.
+    NoModel,
+    /// The selected model is missing but another one is installed, e.g. after
+    /// copying only the settings to another computer.
+    SelectedMissing {
+        selected: ModelChoice,
+        installed: ModelChoice,
+    },
+}
+
+impl ModelNotice {
+    /// The status line and the Speech model detail line that go with the notice.
+    pub(crate) fn status(self) -> ModelErrorStatus {
+        let status = match self {
+            ModelNotice::NoModel => "No speech model installed yet.".to_string(),
+            ModelNotice::SelectedMissing { selected, .. } => {
+                format!("The {} model is not installed.", selected.label())
+            }
+        };
+        ModelErrorStatus {
+            status,
+            model_status: "Not installed.".to_string(),
+        }
+    }
+}
+
+/// The notice for a selected standard model `choice` that is not installed.
+pub(crate) fn model_notice_for(choice: ModelChoice) -> ModelNotice {
+    match installed_model_besides(choice) {
+        Some(installed) => ModelNotice::SelectedMissing {
+            selected: choice,
+            installed,
+        },
+        None => ModelNotice::NoModel,
+    }
+}
+
+/// The notice for the selected model, None when it can be used. Only English
+/// and Multilingual qualify, a Predefined folder is the user's own business and
+/// reports its problems as errors.
+pub(crate) fn selected_model_notice(settings: &AppSettings) -> Option<ModelNotice> {
+    settings.model.folder_name()?;
+    if find_model_dir(settings.model, &settings.model_dir).is_ok() {
+        return None;
+    }
+    Some(model_notice_for(settings.model))
+}
+
+/// Show `notice` over the Model tab and open the application window there. Safe
+/// to call from any thread, the window is opened by the UI thread.
+pub(crate) fn show_model_notice(app: &Arc<AppState>, notice: ModelNotice) {
+    let status = notice.status();
+    update_ui(app, |ui| {
+        ui.model_notice = Some(notice);
+        ui.status = status.status;
+        ui.model_status = status.model_status;
+    });
+    unsafe {
+        let hwnd = hwnd_from_app(app);
+        if hwnd != null_mut() {
+            PostMessageW(hwnd, WM_SHOW_MODEL_NOTICE, 0, 0);
+        }
+    }
+}
+
+/// Remove the notice, e.g. when its ✕ was clicked or the problem is solved.
+pub(crate) fn clear_model_notice(app: &Arc<AppState>) {
+    if lock_ui(app).model_notice.is_some() {
+        update_ui(app, |ui| ui.model_notice = None);
+    }
+}
+
+/// Another standard model than `choice` that is installed, if there is one.
+pub(crate) fn installed_model_besides(choice: ModelChoice) -> Option<ModelChoice> {
+    ModelChoice::ALL
+        .iter()
+        .copied()
+        .filter(|other| *other != choice && other.folder_name().is_some())
+        .find(|other| find_model_dir(*other, "").is_ok())
+}
+
+/// The files of a standard model (English or Multilingual) are in none of the
+/// searched folders. Kept as its own type so `report_model_error` can tell it
+/// apart from real load failures.
+#[derive(Debug)]
+pub(crate) struct ModelNotInstalled {
+    pub(crate) choice: ModelChoice,
+    pub(crate) searched: Vec<PathBuf>,
+}
+
+impl std::fmt::Display for ModelNotInstalled {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "The {} model is not installed. No Nemotron ONNX files in these folders:\n{}",
+            self.choice.label(),
+            self.searched
+                .iter()
+                .map(|path| format!("  - {}", path.display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
+}
+
+impl std::error::Error for ModelNotInstalled {}
 
 /// The process-wide ONNX Runtime environment (parakeet-rs >= 0.4 requires one).
 /// Created on first use and shared by every model load, e.g. when switching models.
@@ -412,20 +551,44 @@ pub(crate) fn find_model_dir(choice: ModelChoice, configured_dir: &str) -> Resul
         return Ok(found.clone());
     }
 
-    let hint = if choice == ModelChoice::Multilingual {
-        "The multilingual model is not installed. Download it on the Model tab of the \
-         application window, or pick another model there.\n\n"
-    } else {
-        "The English model is not installed. Download it on the Model tab of the \
-         application window, or pick another model there.\n\n"
-    };
-    Err(anyhow!(
-        "{hint}Expected Nemotron ONNX files in one of these folders:\n{}",
-        candidates
-            .iter()
-            .map(|p| format!("  - {}", p.display()))
-            .collect::<Vec<_>>()
-            .join("\n")
-    ))
+    Err(anyhow::Error::new(ModelNotInstalled {
+        choice,
+        searched: candidates,
+    }))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn not_installed_error_is_recognized_after_anyhow_wrapping() {
+        let err = anyhow::Error::new(ModelNotInstalled {
+            choice: ModelChoice::Multilingual,
+            searched: vec![PathBuf::from(r"C:\app\models\nemotron_multi")],
+        });
+        let missing = err.downcast_ref::<ModelNotInstalled>().expect("typed error");
+        assert_eq!(missing.choice, ModelChoice::Multilingual);
+        assert!(err.to_string().contains(r"C:\app\models\nemotron_multi"));
+    }
+
+    #[test]
+    fn notice_status_names_the_missing_model() {
+        let notice = ModelNotice::SelectedMissing {
+            selected: ModelChoice::Multilingual,
+            installed: ModelChoice::English,
+        };
+        assert_eq!(notice.status().status, "The Multilingual model is not installed.");
+        assert_eq!(ModelNotice::NoModel.status().model_status, "Not installed.");
+    }
+
+    #[test]
+    fn predefined_model_never_gets_a_notice() {
+        let settings = AppSettings {
+            model: ModelChoice::Predefined,
+            ..AppSettings::default()
+        };
+        assert_eq!(selected_model_notice(&settings), None);
+    }
+}

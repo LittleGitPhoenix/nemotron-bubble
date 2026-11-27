@@ -59,7 +59,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, ClientToScreen, CreateBitmap,
     CreateFontW, CreateRoundRectRgn, DEFAULT_CHARSET,
     DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_EDITCONTROL, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_TOP, DT_VCENTER,
-    DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD,
+    DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint, FF_DONTCARE, FW_BOLD, FW_NORMAL, FW_SEMIBOLD,
     HDC, IntersectClipRect, InvalidateRect, OUT_DEFAULT_PRECIS, PAINTSTRUCT, SelectClipRgn,
     SelectObject,
     SetBkMode, SetTextColor, SetWindowRgn, TRANSPARENT,
@@ -131,6 +131,8 @@ pub(crate) struct UiState {
     /// Why no microphone could be opened, None while one is available. The bubble
     /// and the tray icon show it and give the reason in their tooltips.
     pub(crate) mic_error: Option<String>,
+    /// The annotation over the Model tab when the selected model is not installed.
+    pub(crate) model_notice: Option<ModelNotice>,
     pub(crate) waveform: Vec<f32>,
     pub(crate) current_level: f32,
     pub(crate) last_voice: Instant,
@@ -149,6 +151,8 @@ pub(crate) struct AppState {
     pub(crate) history_content_h: AtomicI32,
     pub(crate) history_hits: Mutex<Vec<(RectI, usize)>>,
     pub(crate) copied_flash: Mutex<Option<usize>>,
+    /// The callout of the model notice as last painted, so clicks on it do not reach the controls below.
+    pub(crate) model_notice_callout: Mutex<Option<RectI>>,
     pub(crate) capturing_hotkey: AtomicBool,
     /// Active tab of the application window (TAB_HISTORY / TAB_MODEL / TAB_SETTINGS).
     pub(crate) settings_tab: AtomicUsize,
@@ -249,6 +253,7 @@ pub(crate) fn run_app() -> Result<()> {
         history_content_h: AtomicI32::new(0),
         history_hits: Mutex::new(Vec::new()),
         copied_flash: Mutex::new(None),
+        model_notice_callout: Mutex::new(None),
         capturing_hotkey: AtomicBool::new(false),
         settings_tab: AtomicUsize::new(TAB_HISTORY),
         settings_scroll: AtomicI32::new(0),
@@ -264,6 +269,7 @@ pub(crate) fn run_app() -> Result<()> {
             status: initial_status,
             model_status: "Not loaded yet.".to_string(),
             mic_error: None,
+            model_notice: None,
             waveform: vec![0.0; WAVE_BARS],
             current_level: 0.0,
             last_voice: Instant::now(),

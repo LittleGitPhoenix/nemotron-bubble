@@ -129,6 +129,7 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
                         &view,
                         &settings_view,
                         &downloads,
+                        None,
                         false,
                         tab,
                     )

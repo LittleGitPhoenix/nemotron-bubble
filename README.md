@@ -78,7 +78,9 @@ ___
 
 Download a prebuilt binary from the [Releases](https://github.com/LittleGitPhoenix/nemotron-bubble/releases) page and extract it into a folder of your choice.
 
-On the first start no speech model is installed yet. Open the application window, go to the *Model* tab and click **Download** next to either **_English_** or **_Multilingual_** (about 2.5 GB each). The app downloads the files from Hugging Face into `models\` next to the exe, verifies them and loads the model.
+On the first start no speech model is installed yet. The application window opens on the *Model* tab and a note explains what to do: click **Download** next to either **_English_** or **_Multilingual_** (about 2.5 GB each). The app downloads the files from Hugging Face into `models\` next to the exe, verifies them, selects the first downloaded model and loads it.
+
+The same note appears when the selected model is missing, for example after copying only the `config\` folder to another computer. It then offers to select the installed model or to download the missing one.
 
 ___
 

@@ -2,11 +2,13 @@
 //! dispatch of painting and clicks to the active tab.
 
 mod history_tab;
+mod model_notice;
 mod model_tab;
 mod settings_tab;
 mod widgets;
 
 pub(crate) use history_tab::*;
+pub(crate) use model_notice::*;
 pub(crate) use model_tab::*;
 pub(crate) use settings_tab::*;
 pub(crate) use widgets::*;
@@ -161,9 +163,9 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
         return;
     }
     let capturing = app.capturing_hotkey.load(Ordering::SeqCst);
-    let (status, model_status) = {
+    let (status, model_status, model_notice) = {
         let ui = lock_ui(app);
-        (ui.status.clone(), ui.model_status.clone())
+        (ui.status.clone(), ui.model_status.clone(), ui.model_notice)
     };
     if let Some(mut canvas) = Canvas::new(WINDOW_WIDTH, WINDOW_HEIGHT) {
         let tab = app.settings_tab.load(Ordering::SeqCst);
@@ -186,16 +188,20 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
             &view,
             &settings_view,
             &downloads,
+            model_notice,
             capturing,
             tab,
         );
         canvas.blit_to(hdc);
         // Remember what the list looked like, for clicks and wheel scrolling.
-        app.history_content_h.store(layout.content_h, Ordering::SeqCst);
-        if layout.scroll != view.scroll {
-            app.history_scroll.store(layout.scroll, Ordering::SeqCst);
+        let history = layout.history;
+        app.history_content_h.store(history.content_h, Ordering::SeqCst);
+        if history.scroll != view.scroll {
+            app.history_scroll.store(history.scroll, Ordering::SeqCst);
         }
-        *app.history_hits.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = layout.hits;
+        *app.history_hits.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = history.hits;
+        *app.model_notice_callout.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            layout.model_notice_callout;
     }
     EndPaint(hwnd, &ps);
 }
@@ -283,10 +289,26 @@ pub(crate) fn toggle_application_window(origin: WindowOrigin) {
             cancel_hotkey_capture(app);
             ShowWindow(hwnd, SW_HIDE);
         } else {
+            show_application_window(origin);
+        }
+    }
+}
+
+/// Open the application window next to `origin`, or bring it to the front if it is already open.
+pub(crate) fn show_application_window(origin: WindowOrigin) {
+    let Some(app) = APP.get() else {
+        return;
+    };
+    unsafe {
+        let hwnd = application_window_hwnd_from_app(app);
+        if hwnd == null_mut() {
+            return;
+        }
+        if IsWindowVisible(hwnd) == 0 {
             place_application_window(hwnd, origin);
             ShowWindow(hwnd, SW_SHOW);
-            SetForegroundWindow(hwnd);
         }
+        SetForegroundWindow(hwnd);
     }
 }
 
@@ -382,15 +404,27 @@ pub(crate) fn handle_application_window_click(x: i32, y: i32) {
 
     match tab {
         TAB_HISTORY => handle_history_tab_click(app, x, y),
-        TAB_MODEL => handle_model_tab_click(app, x, y),
+        TAB_MODEL => {
+            if !handle_model_notice_click(app, x, y) {
+                handle_model_tab_click(app, x, y);
+            }
+        }
         _ => handle_settings_tab_click(app, x, y),
     }
 }
 
+/// What a paint of the application window leaves behind for clicks and scrolling.
+pub(crate) struct WindowLayout {
+    /// The History list (copy-icon hit areas, content height), empty on the other tabs.
+    pub(crate) history: HistoryLayout,
+    /// The callout of the model notice, when it was drawn.
+    pub(crate) model_notice_callout: Option<RectI>,
+}
+
 /// Render the entire application window into a canvas: the frame (header, tab bar,
 /// card, version footer) and the content of the active `tab`. `status` is the latest
-/// status message, shown under the title. Returns the layout of the History list
-/// (copy-icon hit areas, content height), which is empty for the other tabs.
+/// status message, shown under the title. `model_notice` is drawn over the Model tab.
+#[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn render_application_window(
     canvas: &mut Canvas,
     settings: &AppSettings,
@@ -399,9 +433,10 @@ pub(crate) unsafe fn render_application_window(
     history: &HistoryView,
     settings_view: &SettingsTabView,
     downloads: &[ModelDownloadState],
+    model_notice: Option<ModelNotice>,
     capturing: bool,
     tab: usize,
-) -> HistoryLayout {
+) -> WindowLayout {
     let rows = setting_rows(settings);
     let cw = canvas.w;
     let ch = canvas.h;
@@ -415,6 +450,10 @@ pub(crate) unsafe fn render_application_window(
         measure_history_list(canvas.hdc, history)
     } else {
         HistoryList::default()
+    };
+    let notice = match model_notice {
+        Some(notice) if tab == TAB_MODEL => Some(measure_model_notice(canvas.hdc, notice)),
+        _ => None,
     };
 
     // -------- pass 1: anti-aliased shapes straight into the pixel buffer --------
@@ -485,6 +524,13 @@ pub(crate) unsafe fn render_application_window(
         TAB_MODEL => draw_model_text(dc, settings, model_status, &rows, downloads),
         _ => draw_settings_tab_text(dc, settings, &rows, settings_view, capturing),
     }
+    // The model notice goes on top of the finished Model tab, so its scrim dims
+    // the tab's texts too: shapes into the pixels (after GDI is done), then its texts.
+    if let Some(notice) = &notice {
+        GdiFlush();
+        draw_model_notice_shapes(canvas.pixels(), cw, ch, notice);
+        draw_model_notice_text(dc, notice);
+    }
 
     // version footer, bottom right below the card
     SelectObject(dc, small_font() as _);
@@ -500,5 +546,8 @@ pub(crate) unsafe fn render_application_window(
         },
     );
 
-    list.layout
+    WindowLayout {
+        history: list.layout,
+        model_notice_callout: notice.map(|notice| notice.callout),
+    }
 }

@@ -31,6 +31,7 @@ $script:Targets = [ordered]@{
 	'Download:Multilingual' = @{ Tab = 'Model'; X = 302; Y = 450 }
 	'Language'             = @{ Tab = 'Model'; X = 282; Y = 518 } # opens a popup menu
 	'Toggle:Preload'       = @{ Tab = 'Model'; X = 329; Y = 576 }
+	'Notice:Close'         = @{ Tab = 'Model'; X = 336; Y = 498 } # the ✕ of the model notice (shown when the selected model is missing)
 
 	# Settings tab (content coordinates)
 	'Shortcut'             = @{ Tab = 'Settings'; X = 277; Y = 147 } # starts or cancels the key capture

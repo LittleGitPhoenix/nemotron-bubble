@@ -4,6 +4,8 @@ use crate::*;
 
 pub(crate) const CLASS_NAME: &str = "NemotronBubbleWindow";
 pub(crate) const WM_UI_UPDATE: u32 = WM_APP + 1;
+/// Open the application window on the Model tab to show the model notice (posted by any thread).
+pub(crate) const WM_SHOW_MODEL_NOTICE: u32 = WM_APP + 2;
 
 pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
     let hinstance = GetModuleHandleW(null());
@@ -97,6 +99,12 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
         ShowWindow(hwnd, SW_SHOWNA);
     } else {
         ShowWindow(hwnd, SW_HIDE);
+    }
+
+    // A selected model that is not installed opens the Model tab with its notice,
+    // whether or not the model would be preloaded.
+    if let Some(notice) = selected_model_notice(&settings_snapshot(&app)) {
+        show_model_notice(&app, notice);
     }
 
     // Drive waveform + tray animation from a single UI-thread timer.
@@ -230,6 +238,13 @@ pub(crate) unsafe extern "system" fn wnd_proc(
                         _ => {}
                     }
                 }
+            }
+            0
+        }
+        WM_SHOW_MODEL_NOTICE => {
+            if let Some(app) = APP.get() {
+                set_settings_tab(app, TAB_MODEL);
+                show_application_window(WindowOrigin::Bubble);
             }
             0
         }

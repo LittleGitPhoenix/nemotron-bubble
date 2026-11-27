@@ -66,7 +66,7 @@ $w = '<scratch>\nemotron-bubble\<chat>\app'
 | --- | --- |
 | all | `Close`, `Tab:History`, `Tab:Model`, `Tab:Settings` |
 | History | `Trash` (clears the history without asking), `Copy:First` |
-| Model | `Processing:CPU/GPU/Auto`, `Model:English/Multilingual/Predefined`, `CheckForUpdates`, `Download:English/Multilingual` (whatever the row's button says: Download, Update, Resume, Retry, Cancel), `Language` (menu), `Toggle:Preload` |
+| Model | `Processing:CPU/GPU/Auto`, `Model:English/Multilingual/Predefined`, `CheckForUpdates`, `Download:English/Multilingual` (whatever the row's button says: Download, Update, Resume, Retry, Cancel), `Language` (menu), `Toggle:Preload`, `Notice:Close` (the ✕ of the model notice. While the notice shows, clicks on its callout do nothing, so `Language` and `Toggle:Preload` below it are blocked.) |
 | Settings | `Shortcut`, `Microphone` (menu), `BubblePosition` (menu), `Toggle:StartWithWindows`, `Toggle:LiveType`, `Toggle:CopyFinal`, `Toggle:PasteFinal`, `Toggle:Sounds`, `Toggle:Waveform`, `Toggle:TrayAnimation`, `Toggle:EnterStops`, `Toggle:SilenceStop`, `Toggle:FloatingBubble`, `Toggle:BubbleClickOpensWindow` |
 
 The coordinates mirror the layout constants in `src/ui/application_window/*.rs`. **When a change moves, adds or removes an element, update `Targets.ps1` in the same change** and check the affected targets with a click and a screenshot.

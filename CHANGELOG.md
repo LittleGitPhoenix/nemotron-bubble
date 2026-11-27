@@ -5,6 +5,19 @@ All notable changes to **Nemotron Bubble** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ___
 
+## 1.1.0
+
+📅 _2026-??-??_
+✏️ _LittlePhoenix_
+
+### Changed
+
+- When no speech model is installed, the first model whose download finishes is selected automatically.
+- On a first start without any model the application window opens automatically on the *Model* tab and a note over the dimmed tab explains what to do and marks the relevant controls in the background.
+- If the application is started and the model selected in the settings is missing but the other one is installed the application window opens automatically on the *Model* tab and a note over the dimmed tab explains to either select the installed model or to download the selected one. This situation can happen if only settings are copied to another installation.
+
+___
+
 ## 1.0.0
 
 📅 _2026-11-27_

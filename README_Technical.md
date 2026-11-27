@@ -30,6 +30,7 @@ Nemotron Bubble is a Rust app built directly on the Win32 API. There is no Elect
 | `src/ui/application_window/mod.rs` | The application window frame: header, tab bar, placement, dispatch to the tabs |
 | `src/ui/application_window/history_tab.rs` | The *History* tab |
 | `src/ui/application_window/model_tab.rs` | The *Model* tab |
+| `src/ui/application_window/model_notice.rs` | The note over the *Model* tab when the selected model is not installed |
 | `src/ui/application_window/settings_tab.rs` | The *Settings* tab |
 | `src/ui/application_window/widgets.rs` | Controls shared by the tabs: toggles, buttons, segmented controls, scrollbar |
 | `src/ui/tray.rs` | Tray icon and tray menu |
@@ -99,6 +100,8 @@ ___
 A custom model folder can be set for the current session with `$env:NEMOTRON_MODEL_DIR = "C:\path\to\nemotron"`.
 
 `models\` is searched in the working directory, next to the exe and up to four parent folders. On first start the choice is detected: **Predefined** if one of its folders is set, otherwise **English** if installed, otherwise **Multilingual**. Switching unloads the old model first. With *Preload Nemotron* on, the new one loads right away.
+
+When the selected **English** or **Multilingual** model is not installed, the app shows no error. At startup, and when loading fails for that reason, it opens the application window on the *Model* tab with a note over it (`ModelNotice` in `src/model.rs`, drawn by `src/ui/application_window/model_notice.rs`). The tab is dimmed, the controls that help are ringed and marked with badges, and a callout below the downloads explains them. Only its ✕ closes it. It also disappears when a download starts or an installed model is selected. When the selected model is missing, the first model whose download finishes becomes the selected one. A **Predefined** folder without model files still reports an error.
 
 ### Downloads, updates and backups
 

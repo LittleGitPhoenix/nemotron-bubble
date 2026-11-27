@@ -8,6 +8,8 @@ pub(crate) static SMALL_FONT: OnceCell<isize> = OnceCell::new();
 pub(crate) static ICON_FONT: OnceCell<isize> = OnceCell::new();
 pub(crate) static ICON_FONT_LARGE: OnceCell<isize> = OnceCell::new();
 pub(crate) static TINY_FONT: OnceCell<isize> = OnceCell::new();
+pub(crate) static HEADING_FONT: OnceCell<isize> = OnceCell::new();
+pub(crate) static BADGE_FONT: OnceCell<isize> = OnceCell::new();
 #[derive(Copy, Clone)]
 pub(crate) struct RectI {
     pub(crate) left: i32,
@@ -412,4 +414,14 @@ pub(crate) unsafe fn text_left_ellipsis(dc: HDC, text: &str, rect: RectI) {
         &mut r,
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
     );
+}
+
+/// Semi-bold headings, e.g. the title of the model notice.
+pub(crate) fn heading_font() -> isize {
+    *HEADING_FONT.get_or_init(|| unsafe { create_font(-15, FW_SEMIBOLD as i32) })
+}
+
+/// The bold numbers and letters inside the step badges of the model notice.
+pub(crate) fn badge_font() -> isize {
+    *BADGE_FONT.get_or_init(|| unsafe { create_font(-11, FW_BOLD as i32) })
 }
