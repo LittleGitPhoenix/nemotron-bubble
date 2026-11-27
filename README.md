@@ -243,4 +243,11 @@ ___
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](./LICENSE).
+
+___
+
+## Authors
+
+- **snipemanmike**: _v0.1_
+- **LittlePhoenix** with Claude: _v1.0_
