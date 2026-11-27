@@ -121,8 +121,13 @@ impl Canvas {
 
     /// Copy the buffer to a destination DC (opaque double-buffer blit).
     pub(crate) unsafe fn blit_to(&self, dst: HDC) {
+        self.blit_to_at(dst, 0, 0);
+    }
+
+    /// Copy the buffer to a destination DC with its top left corner at (x, y).
+    pub(crate) unsafe fn blit_to_at(&self, dst: HDC, x: i32, y: i32) {
         GdiFlush();
-        BitBlt(dst, 0, 0, self.w, self.h, self.hdc, 0, 0, SRCCOPY);
+        BitBlt(dst, x, y, self.w, self.h, self.hdc, 0, 0, SRCCOPY);
     }
 }
 

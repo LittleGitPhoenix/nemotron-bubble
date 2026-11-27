@@ -14,8 +14,16 @@ pub(crate) const BUBBLE_POSITION_ROW_TOP: i32 = settings_row_top(SETTINGS_TAB_TO
 // The visible part of the tab is the card. The rest is reached by scrolling.
 pub(crate) const SETTINGS_VIEW_TOP: i32 = WINDOW_CARD_TOP;
 pub(crate) const SETTINGS_VIEW_BOTTOM: i32 = WINDOW_HEIGHT - WINDOW_FOOTER_H;
-// Bottom of the content: the bubble position button plus the card's padding.
-pub(crate) const SETTINGS_CONTENT_BOTTOM: i32 = BUBBLE_POSITION_ROW_TOP + 38 + 12;
+// The bubble position picker: a small screen with a taskbar strip at the bottom and
+// six clickable spots (two rows of three) above it.
+const PICKER_WIDTH: i32 = 96;
+const PICKER_HEIGHT: i32 = 42;
+const PICKER_TASKBAR_HEIGHT: i32 = 6;
+const PICKER_COLUMNS: i32 = 3;
+// The auto-stop button fits its widest value ("5 min") plus padding.
+const AUTO_STOP_BUTTON_WIDTH: i32 = 88;
+// Bottom of the content: the bubble position picker plus the card's padding.
+pub(crate) const SETTINGS_CONTENT_BOTTOM: i32 = BUBBLE_POSITION_ROW_TOP + 3 + PICKER_HEIGHT + 12;
 pub(crate) const SETTINGS_MAX_SCROLL: i32 = if SETTINGS_CONTENT_BOTTOM > SETTINGS_VIEW_BOTTOM {
     SETTINGS_CONTENT_BOTTOM - SETTINGS_VIEW_BOTTOM
 } else {
@@ -61,27 +69,6 @@ fn settings_on_screen(app: &Arc<AppState>, rect: RectI) -> RectI {
     rect.shifted(-settings_tab_scroll(app))
 }
 
-/// Popup menu with the bubble position presets, current one checked.
-pub(crate) unsafe fn show_bubble_position_menu(app: &Arc<AppState>) {
-    let menu = CreatePopupMenu();
-    if menu == null_mut() {
-        return;
-    }
-    let current = settings_snapshot(app).bubble_position;
-    for (index, position) in BubblePosition::ALL.iter().enumerate() {
-        let mut flags = MF_STRING;
-        if *position == current {
-            flags |= MF_CHECKED;
-        }
-        let text = wide_null(position.label());
-        AppendMenuW(menu, flags, IDM_BUBBLE_POS_BASE + index, text.as_ptr());
-        if index == 2 {
-            AppendMenuW(menu, MF_SEPARATOR, 0, null()); // between top and bottom row
-        }
-    }
-    show_menu_below(app, menu, settings_on_screen(app, settings_bubble_position_rect()));
-}
-
 /// Popup menu with the auto-stop durations, current one checked.
 pub(crate) unsafe fn show_auto_stop_menu(app: &Arc<AppState>) {
     let menu = CreatePopupMenu();
@@ -94,10 +81,9 @@ pub(crate) unsafe fn show_auto_stop_menu(app: &Arc<AppState>) {
         if *seconds == current {
             flags |= MF_CHECKED;
         }
-        let text = wide_null(&silence_auto_stop_label(*seconds));
-        AppendMenuW(menu, flags, IDM_AUTO_STOP_BASE + index, text.as_ptr());
+        append_menu_item(menu, flags, IDM_AUTO_STOP_BASE + index, &silence_auto_stop_label(*seconds));
         if index == 0 {
-            AppendMenuW(menu, MF_SEPARATOR, 0, null()); // between Off and the durations
+            append_menu_separator(menu); // between Off and the durations
         }
     }
     show_menu_below(app, menu, settings_on_screen(app, settings_auto_stop_rect()));
@@ -115,21 +101,17 @@ pub(crate) unsafe fn show_microphone_menu(app: &Arc<AppState>) {
     names.truncate(IDM_MIC_MAX - 1);
 
     let checked = |selected: bool| if selected { MF_STRING | MF_CHECKED } else { MF_STRING };
-    let text = wide_null("Windows default");
-    AppendMenuW(menu, checked(current.is_empty()), IDM_MIC_BASE, text.as_ptr());
-    AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    append_menu_item(menu, checked(current.is_empty()), IDM_MIC_BASE, "Windows default");
+    append_menu_separator(menu);
     if names.is_empty() {
-        let text = wide_null("No microphone found");
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, text.as_ptr());
+        append_menu_item(menu, MF_STRING | MF_GRAYED, 0, "No microphone found");
     }
     for (index, name) in names.iter().enumerate() {
-        // "&" would turn the next letter into a menu accelerator
-        let text = wide_null(&name.replace('&', "&&"));
-        AppendMenuW(menu, checked(*name == current), IDM_MIC_BASE + 1 + index, text.as_ptr());
+        append_menu_item(menu, checked(*name == current), IDM_MIC_BASE + 1 + index, name);
     }
     if !current.is_empty() && !names.contains(&current) {
-        let text = wide_null(&format!("{} (not connected)", current.replace('&', "&&")));
-        AppendMenuW(menu, MF_STRING | MF_GRAYED | MF_CHECKED, 0, text.as_ptr());
+        let text = format!("{current} (not connected)");
+        append_menu_item(menu, MF_STRING | MF_GRAYED | MF_CHECKED, 0, &text);
     }
     MICROPHONE_MENU.with(|menu_names| *menu_names.borrow_mut() = names);
     show_menu_below(app, menu, settings_on_screen(app, settings_microphone_rect()));
@@ -170,37 +152,64 @@ pub(crate) const fn settings_row_top(index: usize) -> i32 {
     SETTINGS_TAB_TOGGLES_TOP + index as i32 * 49
 }
 
-/// A drop-down button right of the label of the row at `row_top`.
-fn row_button_rect(row_top: i32) -> RectI {
+/// The auto-stop button (opens the duration popup menu), right of its label.
+pub(crate) fn settings_auto_stop_rect() -> RectI {
     RectI {
-        left: WINDOW_INNER_RIGHT - 150,
-        top: row_top + 6,
+        left: WINDOW_INNER_RIGHT - AUTO_STOP_BUTTON_WIDTH,
+        top: AUTO_STOP_ROW_TOP + 6,
         right: WINDOW_INNER_RIGHT,
-        bottom: row_top + 38,
+        bottom: AUTO_STOP_ROW_TOP + 38,
     }
 }
 
-/// The auto-stop button (opens the duration popup menu), right of its label.
-pub(crate) fn settings_auto_stop_rect() -> RectI {
-    row_button_rect(AUTO_STOP_ROW_TOP)
+/// The small screen of the bubble position picker, right of its label.
+pub(crate) fn bubble_position_picker_rect() -> RectI {
+    let top = BUBBLE_POSITION_ROW_TOP + 3;
+    RectI {
+        left: WINDOW_INNER_RIGHT - PICKER_WIDTH,
+        top,
+        right: WINDOW_INNER_RIGHT,
+        bottom: top + PICKER_HEIGHT,
+    }
 }
 
-/// The bubble position button (opens the preset popup menu), right of its label.
-pub(crate) fn settings_bubble_position_rect() -> RectI {
-    row_button_rect(BUBBLE_POSITION_ROW_TOP)
+/// The clickable cell of one position in the picker. Cells are in BubblePosition::ALL
+/// order: the top row left to right, then the bottom row.
+pub(crate) fn bubble_position_spot_rect(position: BubblePosition) -> RectI {
+    let index = BubblePosition::ALL.iter().position(|p| *p == position).unwrap_or(0) as i32;
+    let picker = bubble_position_picker_rect();
+    let cell_width = PICKER_WIDTH / PICKER_COLUMNS;
+    let cell_height = (PICKER_HEIGHT - PICKER_TASKBAR_HEIGHT) / 2;
+    let left = picker.left + (index % PICKER_COLUMNS) * cell_width;
+    let top = picker.top + (index / PICKER_COLUMNS) * cell_height;
+    RectI {
+        left,
+        top,
+        right: left + cell_width,
+        bottom: top + cell_height,
+    }
 }
 
-/// Label, detail and value of a drop-down row at `row_top` (the button is drawn in pass 1).
-unsafe fn draw_row_button_text(dc: HDC, row_top: i32, title: &str, detail: &str, value: &str) {
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, title, 40, row_top + 1, 160, 20);
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, detail, 40, row_top + 21, 160, 18);
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(245, 248, 252));
-    text_center(dc, &format!("{value}  \u{25BE}"), row_button_rect(row_top));
+/// The picker at `picker` (already shifted to the drawing position): a screen with a
+/// taskbar strip and a small pill per position, the selected one in the accent color.
+fn draw_bubble_position_picker(buf: &mut [u32], cw: i32, ch: i32, picker: RectI, selected: BubblePosition, dy: i32) {
+    let frame = (66, 72, 84);
+    let (x, y) = (picker.left as f32, picker.top as f32);
+    let (w, h) = (PICKER_WIDTH as f32, PICKER_HEIGHT as f32);
+    // The frame is the outer shape, the screen surface is inset by its width.
+    fill_round_rect(buf, cw, ch, x, y, w, h, 7.0, frame, frame, 1.0);
+    fill_round_rect(buf, cw, ch, x + 1.5, y + 1.5, w - 3.0, h - 3.0, 5.5, (36, 40, 49), (36, 40, 49), 1.0);
+    let taskbar = PICKER_TASKBAR_HEIGHT as f32;
+    fill_round_rect(buf, cw, ch, x + 1.5, y + h - taskbar - 1.5, w - 3.0, taskbar, 2.0, frame, frame, 1.0);
+    for position in BubblePosition::ALL {
+        let cell = bubble_position_spot_rect(position).shifted(dy);
+        let (cx, cy) = ((cell.left + cell.right) as f32 / 2.0, (cell.top + cell.bottom) as f32 / 2.0);
+        if position == selected {
+            fill_round_rect(buf, cw, ch, cx - 9.0, cy - 4.0, 18.0, 8.0, 4.0, (110, 162, 255), (84, 138, 250), 1.0);
+        } else {
+            fill_round_rect(buf, cw, ch, cx - 8.0, cy - 3.5, 16.0, 7.0, 3.5, frame, frame, 1.0);
+        }
+    }
 }
 
 /// Click on the shortcut button: start capturing a new combo, or cancel a
@@ -234,17 +243,21 @@ pub(crate) fn handle_settings_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
         unsafe { show_microphone_menu(app) };
     } else if settings_auto_stop_rect().contains(x, y) {
         unsafe { show_auto_stop_menu(app) };
-    } else if settings_bubble_position_rect().contains(x, y) {
-        unsafe { show_bubble_position_menu(app) };
+    } else if let Some(position) = BubblePosition::ALL
+        .into_iter()
+        .find(|position| bubble_position_spot_rect(*position).contains(x, y))
+    {
+        select_bubble_position(app, position);
     }
 }
 
 /// Pass 1 of the Settings tab: shortcut button, microphone button, toggle switches,
-/// auto-stop and Bubble position buttons (all clipped to the card), and the scrollbar.
+/// auto-stop button and bubble position picker (all clipped to the card), and the scrollbar.
 pub(crate) fn draw_settings_tab_shapes(
     buf: &mut [u32],
     cw: i32,
     ch: i32,
+    settings: &AppSettings,
     rows: &[SettingRow],
     view: &SettingsTabView,
     capturing: bool,
@@ -266,7 +279,8 @@ pub(crate) fn draw_settings_tab_shapes(
             draw_toggle(card, cw, view_h, toggle_rect(row.id).shifted(dy), row.enabled);
         }
         draw_button_bg(card, cw, view_h, settings_auto_stop_rect().shifted(dy), false);
-        draw_button_bg(card, cw, view_h, settings_bubble_position_rect().shifted(dy), false);
+        let picker = bubble_position_picker_rect().shifted(dy);
+        draw_bubble_position_picker(card, cw, view_h, picker, settings.bubble_position, dy);
     }
     // scrollbar inside the card's padding, on the same line as the History tab's
     let content_h = SETTINGS_CONTENT_BOTTOM - SETTINGS_VIEW_TOP;
@@ -334,21 +348,26 @@ pub(crate) unsafe fn draw_settings_tab_text(
         draw_toggle_text(dc, row, toggle_rect(row.id).shifted(dy));
     }
 
-    // drop-down rows: label + detail on the left, popup button on the right
-    draw_row_button_text(
-        dc,
-        AUTO_STOP_ROW_TOP + dy,
-        "Auto-stop on silence",
-        "Ends a forgotten dictation.",
-        &silence_auto_stop_label(settings.silence_auto_stop_secs),
-    );
-    draw_row_button_text(
-        dc,
-        BUBBLE_POSITION_ROW_TOP + dy,
-        "Bubble position",
-        "Preset spot on the screen.",
-        settings.bubble_position.label(),
-    );
+    // auto-stop: label + detail on the left, popup button on the right
+    row_label(dc, AUTO_STOP_ROW_TOP + dy, "Auto-stop on silence", "Ends a forgotten dictation.");
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(245, 248, 252));
+    let value = silence_auto_stop_label(settings.silence_auto_stop_secs);
+    text_center(dc, &format!("{value}  \u{25BE}"), settings_auto_stop_rect().shifted(dy));
+
+    // bubble position: the detail names the position, the picker is drawn in pass 1
+    let position = format!("{}.", settings.bubble_position.label());
+    row_label(dc, BUBBLE_POSITION_ROW_TOP + dy, "Bubble position", &position);
 
     SelectClipRgn(dc, null_mut());
+}
+
+/// Title and detail line of a row at `row_top` whose control sits on the right.
+unsafe fn row_label(dc: HDC, row_top: i32, title: &str, detail: &str) {
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, title, 40, row_top + 1, 200, 20);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(124, 134, 148));
+    text_left(dc, detail, 40, row_top + 21, 200, 18);
 }

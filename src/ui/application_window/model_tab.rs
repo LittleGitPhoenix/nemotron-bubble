@@ -35,11 +35,9 @@ pub(crate) unsafe fn build_language_menu(settings: &AppSettings, recording: bool
         if !enabled {
             flags |= MF_GRAYED;
         }
-        let text = wide_null(label);
-        // AppendMenuW copies the string, so the buffer may be dropped afterwards.
-        AppendMenuW(menu, flags, IDM_LANG_BASE + index, text.as_ptr());
+        append_menu_item(menu, flags, IDM_LANG_BASE + index, label);
         if index == 0 {
-            AppendMenuW(menu, MF_SEPARATOR, 0, null());
+            append_menu_separator(menu);
         }
     }
     menu

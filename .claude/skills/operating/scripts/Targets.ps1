@@ -5,7 +5,7 @@
 # Settings tab entries are in content coordinates (the position at scroll offset 0). That tab
 # scrolls by up to SETTINGS_MAX_SCROLL px, Invoke-Target.ps1 scrolls it to the top or bottom first.
 
-$script:SettingsTabMaxScroll = 83 # SETTINGS_CONTENT_BOTTOM (863) - SETTINGS_VIEW_BOTTOM (780)
+$script:SettingsTabMaxScroll = 90 # SETTINGS_CONTENT_BOTTOM (870) - SETTINGS_VIEW_BOTTOM (780)
 $script:SettingsViewBottom = 780  # rows whose center lies below this need the tab scrolled down
 
 $script:Targets = [ordered]@{
@@ -36,8 +36,15 @@ $script:Targets = [ordered]@{
 	# Settings tab (content coordinates)
 	'Shortcut'             = @{ Tab = 'Settings'; X = 277; Y = 147 } # starts or cancels the key capture
 	'Microphone'           = @{ Tab = 'Settings'; X = 196; Y = 240 } # opens a popup menu
-	'AutoStop'             = @{ Tab = 'Settings'; X = 277; Y = 688 } # opens a popup menu (row index 8)
-	'BubblePosition'       = @{ Tab = 'Settings'; X = 277; Y = 835 } # opens a popup menu
+	'AutoStop'             = @{ Tab = 'Settings'; X = 308; Y = 688 } # opens a popup menu (row index 8)
+}
+
+# The spots of the bubble position picker (96 x 42 px at 256,816, cells of 32 x 18 px),
+# in BubblePosition::ALL order: the top row left to right, then the bottom row.
+$spotNames = @('TopLeft', 'TopCenter', 'TopRight', 'BottomLeft', 'BottomCenter', 'BottomRight')
+for ($i = 0; $i -lt $spotNames.Count; $i++)
+{
+	$script:Targets["BubblePosition:$($spotNames[$i])"] = @{ Tab = 'Settings'; X = 272 + 32 * ($i % 3); Y = 825 + 18 * [Math]::Floor($i / 3) }
 }
 
 # The switches of the Settings tab, in SETTINGS_TAB_TOGGLES order: row top 274 + 49 * row,

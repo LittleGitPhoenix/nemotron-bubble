@@ -62,8 +62,7 @@ pub(crate) unsafe fn show_menu_below(app: &Arc<AppState>, menu: HMENU, button: R
     };
     ClientToScreen(hwnd, &mut point);
     SetForegroundWindow(hwnd);
-    TrackPopupMenu(menu, 0, point.x, point.y, 0, hwnd, null());
-    DestroyMenu(menu);
+    track_popup_menu(menu, 0, point.x, point.y, hwnd);
 }
 
 pub(crate) struct SettingRow {
@@ -471,7 +470,7 @@ pub(crate) unsafe fn render_application_window(
         match tab {
             TAB_HISTORY => draw_history_shapes(buf, cw, ch, &list),
             TAB_MODEL => draw_model_shapes(buf, cw, ch, settings, downloads),
-            _ => draw_settings_tab_shapes(buf, cw, ch, &rows, settings_view, capturing),
+            _ => draw_settings_tab_shapes(buf, cw, ch, settings, &rows, settings_view, capturing),
         }
     }
 

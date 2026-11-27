@@ -209,6 +209,9 @@ pub(crate) unsafe extern "system" fn wnd_proc(
             handle_command(loword(wparam as usize) as usize);
             0
         }
+        // Entries of the owner-drawn popup menus (src/ui/menu.rs).
+        WM_MEASUREITEM if measure_menu_item(lparam) => 1,
+        WM_DRAWITEM if draw_menu_item(lparam) => 1,
         WM_TIMER => {
             if wparam == ANIM_TIMER_ID {
                 on_anim_tick(hwnd);
@@ -286,11 +289,6 @@ pub(crate) fn handle_command(command: usize) {
         id if (IDM_LANG_BASE..IDM_LANG_BASE + LANGUAGES.len()).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_language(app, LANGUAGES[id - IDM_LANG_BASE].0);
-            }
-        }
-        id if (IDM_BUBBLE_POS_BASE..IDM_BUBBLE_POS_BASE + BubblePosition::ALL.len()).contains(&id) => {
-            if let Some(app) = APP.get() {
-                select_bubble_position(app, BubblePosition::ALL[id - IDM_BUBBLE_POS_BASE]);
             }
         }
         id if (IDM_MIC_BASE..IDM_MIC_BASE + IDM_MIC_MAX).contains(&id) => {

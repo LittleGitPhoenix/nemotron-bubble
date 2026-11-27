@@ -67,7 +67,7 @@ $w = '<scratch>\nemotron-bubble\<chat>\app'
 | all | `Close`, `Tab:History`, `Tab:Model`, `Tab:Settings` |
 | History | `Trash` (clears the history without asking), `Copy:First` |
 | Model | `Processing:CPU/GPU/Auto`, `Model:English/Multilingual/Predefined`, `CheckForUpdates`, `Download:English/Multilingual` (whatever the row's button says: Download, Update, Resume, Retry, Cancel), `Language` (menu), `Toggle:Preload`, `Notice:Close` (the ✕ of the model notice. While the notice shows, clicks on its callout do nothing, so `Language` and `Toggle:Preload` below it are blocked.) |
-| Settings | `Shortcut`, `Microphone` (menu), `AutoStop` (menu), `BubblePosition` (menu), `Toggle:StartWithWindows`, `Toggle:LiveType`, `Toggle:CopyFinal`, `Toggle:PasteFinal`, `Toggle:Sounds`, `Toggle:Waveform`, `Toggle:TrayAnimation`, `Toggle:EnterStops`, `Toggle:FloatingBubble`, `Toggle:BubbleClickOpensWindow` |
+| Settings | `Shortcut`, `Microphone` (menu), `AutoStop` (menu), `BubblePosition:TopLeft/TopCenter/TopRight/BottomLeft/BottomCenter/BottomRight` (the spots of the screen picker), `Toggle:StartWithWindows`, `Toggle:LiveType`, `Toggle:CopyFinal`, `Toggle:PasteFinal`, `Toggle:Sounds`, `Toggle:Waveform`, `Toggle:TrayAnimation`, `Toggle:EnterStops`, `Toggle:FloatingBubble`, `Toggle:BubbleClickOpensWindow` |
 
 The coordinates mirror the layout constants in `src/ui/application_window/*.rs`. **When a change moves, adds or removes an element, update `Targets.ps1` in the same change** and check the affected targets with a click and a screenshot.
 
@@ -82,13 +82,13 @@ The coordinates mirror the layout constants in `src/ui/application_window/*.rs`.
 - Without `-UseModels` the test copy has no models. That is the right state for testing downloads (2.5 GB per model, so check the connection speed first). With `-UseModels` the models are the user's: never download, update or edit them in such a test, because an update writes where the model was found.
 - `preload_model` defaults to false in test copies, so no 2.5 GB load happens unless a test needs it. Load time is about 2 s on the CPU. Wait with `Get-State.ps1 -WaitFor 'Nemotron loaded'`.
 - The app is not DPI-aware. Click coordinates are always the layout constants. On a scaled display, screenshot pixels can differ from them.
-- The Settings tab scrolls by up to 83 px (two notches). `Invoke-Target.ps1` scrolls to the top or bottom before clicking a Settings-tab target. Clicks outside the card are ignored.
+- The Settings tab scrolls by up to 90 px (two notches). `Invoke-Target.ps1` scrolls to the top or bottom before clicking a Settings-tab target. Clicks outside the card are ignored.
 - **Cannot be tested from a script**: the global hotkey, real dictation, microphone input, typing into other apps, hover effects. Say so and ask the user to try them.
 - `--self-test` needs no UI: `Start-Nemotron.ps1 -NoStart -UseModels`, then run `<dir>\nemotron-bubble.exe --self-test` with the working directory it prints.
 
 ## Recipes
 
-**Pick a popup-menu entry** (Language, Microphone, Auto-stop, Bubble position):
+**Pick a popup-menu entry** (Language, Microphone, Auto-stop, tray menu):
 
 ```powershell
 & "$s\Invoke-Target.ps1" -ProcessId <n> -Target Microphone

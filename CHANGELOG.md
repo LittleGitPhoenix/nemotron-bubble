@@ -16,6 +16,8 @@ ___
 - On a first start without any model the application window opens automatically on the *Model* tab and a note over the dimmed tab explains what to do and marks the relevant controls in the background.
 - If the application is started and the model selected in the settings is missing but the other one is installed the application window opens automatically on the *Model* tab and a note over the dimmed tab explains to either select the installed model or to download the selected one. This situation can happen if only settings are copied to another installation.
 - *Auto-stop on silence* on the *Settings* tab is a drop-down instead of a switch. Besides *Off* it offers 10 s, 15 s (the default as before), 30 s, 1 min, 2 min and 5 min. It is saved as `silence_auto_stop_secs` in `settings.json`, with `0` for *Off*. An auto-stop switched off in an older `settings.json` stays off.
+- The *Bubble position* is picked on a small picture of the screen with six clickable spots instead of a popup menu. The line below the setting names the current position.
+- The popup menus (*Microphone*, *Auto-stop on silence*, *Language* and the tray menu with its submenus) are drawn in the dark colors of the application window instead of the light Windows style.
 
 ### Fixed
 

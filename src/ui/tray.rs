@@ -13,8 +13,6 @@ pub(crate) const IDM_MODEL_BASE: usize = 1100;
 pub(crate) const IDM_LANG_BASE: usize = 1200;
 // Tray "Processing" submenu: one id per ComputeChoice, in ComputeChoice::ALL order.
 pub(crate) const IDM_COMPUTE_BASE: usize = 1300;
-// Bubble position popup menu: one id per BubblePosition, in BubblePosition::ALL order.
-pub(crate) const IDM_BUBBLE_POS_BASE: usize = 1400;
 // Microphone popup menu: 0 = Windows default, then one id per listed input device.
 pub(crate) const IDM_MIC_BASE: usize = 1500;
 pub(crate) const IDM_MIC_MAX: usize = 64;
@@ -89,20 +87,10 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
         .map(|app| app.recording.load(Ordering::SeqCst))
         .unwrap_or(false);
 
-    let start_text = wide_null(if recording { "Stop" } else { "Start" });
-    let show_text = wide_null("Show / Hide Bubble");
-    let quit_text = wide_null("Quit");
-    let model_text = wide_null("Speech model");
-    let version_text = wide_null(&format!("Nemotron Bubble {APP_VERSION}"));
-
     // "Speech model" submenu, current choice checked; locked while dictating.
     let menu_settings = APP.get().map(settings_snapshot).unwrap_or_default();
     let current_model = menu_settings.model;
     let model_menu = CreatePopupMenu();
-    let model_labels: Vec<Vec<u16>> = ModelChoice::ALL
-        .iter()
-        .map(|choice| wide_null(choice.label()))
-        .collect();
     if model_menu != null_mut() {
         for (index, choice) in ModelChoice::ALL.iter().enumerate() {
             let mut flags = MF_STRING;
@@ -112,22 +100,21 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
             if recording || !model_choice_available(&menu_settings, *choice) {
                 flags |= MF_GRAYED;
             }
-            AppendMenuW(model_menu, flags, IDM_MODEL_BASE + index, model_labels[index].as_ptr());
+            append_menu_item(model_menu, flags, IDM_MODEL_BASE + index, choice.label());
         }
     }
 
     // The version heads the menu as information, Quit ends it like in other Windows apps.
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, version_text.as_ptr());
-    AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    AppendMenuW(menu, MF_STRING, IDM_START_STOP, start_text.as_ptr());
-    AppendMenuW(menu, MF_STRING, IDM_SHOW_HIDE, show_text.as_ptr());
+    append_menu_item(menu, MF_STRING | MF_GRAYED, 0, &format!("Nemotron Bubble {APP_VERSION}"));
+    append_menu_separator(menu);
+    append_menu_item(menu, MF_STRING, IDM_START_STOP, if recording { "Stop" } else { "Start" });
+    append_menu_item(menu, MF_STRING, IDM_SHOW_HIDE, "Show / Hide Bubble");
     if model_menu != null_mut() {
-        // DestroyMenu(menu) below also destroys this attached submenu.
-        AppendMenuW(menu, MF_POPUP, model_menu as usize, model_text.as_ptr());
+        // Destroying the menu after it closed also destroys this attached submenu.
+        append_menu_item(menu, MF_POPUP, model_menu as usize, "Speech model");
     }
     // "Processing" submenu: Auto / GPU / CPU, current one checked.
     let compute_menu = CreatePopupMenu();
-    let compute_text = wide_null(&format!("Processing: {}", menu_settings.compute.label()));
     if compute_menu != null_mut() {
         for (index, choice) in ComputeChoice::ALL.iter().enumerate() {
             let mut flags = MF_STRING;
@@ -137,34 +124,30 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
             if recording {
                 flags |= MF_GRAYED;
             }
-            let label = wide_null(choice.label());
-            AppendMenuW(compute_menu, flags, IDM_COMPUTE_BASE + index, label.as_ptr());
+            append_menu_item(compute_menu, flags, IDM_COMPUTE_BASE + index, choice.label());
         }
     }
     let language_menu = build_language_menu(&menu_settings, recording);
-    let language_text = wide_null(&format!(
-        "Language: {}",
-        language_label(&menu_settings.language)
-    ));
     if language_menu != null_mut() {
         let flags = if language_selectable(&menu_settings) {
             MF_POPUP
         } else {
             MF_POPUP | MF_GRAYED
         };
-        AppendMenuW(menu, flags, language_menu as usize, language_text.as_ptr());
+        let text = format!("Language: {}", language_label(&menu_settings.language));
+        append_menu_item(menu, flags, language_menu as usize, &text);
     }
     if compute_menu != null_mut() {
-        AppendMenuW(menu, MF_POPUP, compute_menu as usize, compute_text.as_ptr());
+        let text = format!("Processing: {}", menu_settings.compute.label());
+        append_menu_item(menu, MF_POPUP, compute_menu as usize, &text);
     }
-    AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    AppendMenuW(menu, MF_STRING, IDM_QUIT, quit_text.as_ptr());
+    append_menu_separator(menu);
+    append_menu_item(menu, MF_STRING, IDM_QUIT, "Quit");
 
     let mut point: POINT = std::mem::zeroed();
     GetCursorPos(&mut point);
     SetForegroundWindow(hwnd);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, null());
-    DestroyMenu(menu);
+    track_popup_menu(menu, TPM_RIGHTBUTTON, point.x, point.y, hwnd);
 }
 
 /// Build a 32x32 tray icon. While recording the equalizer bars scale with `level`

@@ -183,7 +183,7 @@ On by default. The model is loaded at startup and kept in memory, so the first d
 | `Auto-stop on silence` | Stops the dictation once neither sound nor words were detected for this long: 10 s, 15 s, 30 s, 1 min, 2 min or 5 min. Each sound and each recognized word starts the time again. *Off* lets you pause freely. | 15 s |
 | `Show floating bubble` | Off keeps the app in the tray only. | On |
 | `Bubble click opens window` | Off makes a click on the bubble start and stop the dictation instead. | On |
-| `Bubble position` | One of six presets: top or bottom, each left, center or right. | Bottom right |
+| `Bubble position` | One of six presets: top or bottom, each left, center or right. Click the spot on the small picture of the screen. | Bottom right |
 
 
 
