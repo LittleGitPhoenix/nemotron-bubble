@@ -377,11 +377,10 @@ pub(crate) fn paint_bubble_into(
         dot_a,
     );
 
-    // waveform fills the remainder of the pill (the same area draw_wave_bars uses)
+    // The crossed-out microphone sits in the centre of the pill. The waveform fills the
+    // remainder of the pill right of the dot.
     if mic_missing {
-        let area_left = dot_cx + dot_r + 6.0;
-        let area_right = px + pw - 12.0;
-        draw_mic_off(buf, cw, ch, (area_left + area_right) / 2.0, py + ph / 2.0);
+        draw_mic_off(buf, cw, ch, px + pw / 2.0, py + ph / 2.0);
         return;
     }
     let active = recording && wave_enabled;
@@ -685,3 +684,55 @@ pub(crate) unsafe fn cursor_rect() -> RECT {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Whether a premultiplied pixel is clearly the amber of the "no microphone" state.
+    /// The pill body is bluish gray and the shadow black, so neither passes.
+    fn is_amber(pixel: u32) -> bool {
+        let red = ((pixel >> 16) & 0xff) as i32;
+        let blue = (pixel & 0xff) as i32;
+        red - blue > 100
+    }
+
+    #[test]
+    fn no_microphone_icon_is_centred_in_the_pill() {
+        let mut buffer = vec![0u32; (WIDTH * HEIGHT) as usize];
+        let wave = [0.0; WAVE_BARS];
+        paint_bubble_into(&mut buffer, WIDTH, HEIGHT, 0.0, 0.0, &wave, false, true, true);
+        let amber = |x: i32, y: i32| is_amber(buffer[(y * WIDTH + x) as usize]);
+        let column_has_amber = |x: i32| (0..HEIGHT).any(|y| amber(x, y));
+
+        // The amber status dot comes first from the left. The icon starts after the first
+        // column without amber that follows it.
+        let dot_start = (0..WIDTH).find(|&x| column_has_amber(x)).expect("Status dot not found.");
+        let dot_end = (dot_start..WIDTH).find(|&x| !column_has_amber(x)).expect("Status dot never ends.");
+
+        let (mut left, mut right, mut top, mut bottom) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+        for y in 0..HEIGHT {
+            for x in dot_end..WIDTH {
+                if amber(x, y) {
+                    left = left.min(x);
+                    right = right.max(x);
+                    top = top.min(y);
+                    bottom = bottom.max(y);
+                }
+            }
+        }
+        assert!(left <= right, "No microphone icon found right of the status dot.");
+
+        let icon_centre_x = (left + right + 1) as f32 / 2.0;
+        let icon_centre_y = (top + bottom + 1) as f32 / 2.0;
+        let pill_centre_x = BUBBLE_MARGIN as f32 + PILL_W as f32 / 2.0;
+        let pill_centre_y = BUBBLE_MARGIN as f32 + PILL_H as f32 / 2.0;
+        assert!(
+            (icon_centre_x - pill_centre_x).abs() <= 1.0,
+            "Icon centre x {icon_centre_x} is not the pill centre x {pill_centre_x}."
+        );
+        assert!(
+            (icon_centre_y - pill_centre_y).abs() <= 1.0,
+            "Icon centre y {icon_centre_y} is not the pill centre y {pill_centre_y}."
+        );
+    }
+}
