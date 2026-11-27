@@ -1,2 +1,9 @@
 /target/
 /models/
+
+# Local cross-build helpers, specific to one machine (WSL distro name, paths)
+/scripts/build-wsl.ps1
+/scripts/build-wsl.sh
+
+# Local instructions for Claude, specific to one machine.
+/.claude/rules/user*.instructions.md
