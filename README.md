@@ -20,7 +20,7 @@ ___
 | **Push-to-talk** | One shortcut starts and stops dictation from any app. |
 | **Customizable shortcut** | Click *Global shortcut* on the *Settings* tab and press any combo (Ctrl / Alt / Shift + key). The default is `Ctrl+Space`. |
 | **Types as you speak** | The words appear at the cursor while you speak. The clipboard stays untouched. |
-| **Auto-stops on silence** | A forgotten recording does not run forever. It stops after 15 s of quiet. |
+| **Auto-stops on silence** | A forgotten recording does not run forever. It stops once neither sound nor words were detected for 15 s. The time can be changed. |
 | **Private and offline** | The Nemotron ONNX model runs locally. No internet, no accounts, no telemetry. |
 | **English or multilingual** | Pick the model. For the multilingual one, pick the spoken language or let the model detect it. |
 | **CPU or GPU** | Run the model on the processor or on any DirectX 12 graphics adapter. |
@@ -180,7 +180,7 @@ On by default. The model is loaded at startup and kept in memory, so the first d
 | `Waveform animation` | Shows the live microphone level in the bubble while recording. | On |
 | `Animate the tray icon` | Lets the tray icon pulse while you speak. | On |
 | `Enter stops recording` | Pressing Enter finishes the dictation and submits the text. | Off |
-| `Auto-stop on silence` | Stops the dictation after 15 s without speech. Turn it off to pause freely. | On |
+| `Auto-stop on silence` | Stops the dictation once neither sound nor words were detected for this long: 10 s, 15 s, 30 s, 1 min, 2 min or 5 min. Each sound and each recognized word starts the time again. *Off* lets you pause freely. | 15 s |
 | `Show floating bubble` | Off keeps the app in the tray only. | On |
 | `Bubble click opens window` | Off makes a click on the bubble start and stop the dictation instead. | On |
 | `Bubble position` | One of six presets: top or bottom, each left, center or right. | Bottom right |

@@ -36,16 +36,19 @@ $script:Targets = [ordered]@{
 	# Settings tab (content coordinates)
 	'Shortcut'             = @{ Tab = 'Settings'; X = 277; Y = 147 } # starts or cancels the key capture
 	'Microphone'           = @{ Tab = 'Settings'; X = 196; Y = 240 } # opens a popup menu
+	'AutoStop'             = @{ Tab = 'Settings'; X = 277; Y = 688 } # opens a popup menu (row index 8)
 	'BubblePosition'       = @{ Tab = 'Settings'; X = 277; Y = 835 } # opens a popup menu
 }
 
-# The switches of the Settings tab, in SETTINGS_TAB_TOGGLES order: row top 274 + 49 * index,
-# switch center 22 px below the row top.
+# The switches of the Settings tab, in SETTINGS_TAB_TOGGLES order: row top 274 + 49 * row,
+# switch center 22 px below the row top. The auto-stop row takes row 8 (AUTO_STOP_ROW_INDEX),
+# so the switches after it move down by one row.
 $toggleNames = @(
 	'StartWithWindows', 'LiveType', 'CopyFinal', 'PasteFinal', 'Sounds', 'Waveform',
-	'TrayAnimation', 'EnterStops', 'SilenceStop', 'FloatingBubble', 'BubbleClickOpensWindow'
+	'TrayAnimation', 'EnterStops', 'FloatingBubble', 'BubbleClickOpensWindow'
 )
 for ($i = 0; $i -lt $toggleNames.Count; $i++)
 {
-	$script:Targets["Toggle:$($toggleNames[$i])"] = @{ Tab = 'Settings'; X = 329; Y = 274 + 49 * $i + 22 }
+	$row = if ($i -ge 8) { $i + 1 } else { $i }
+	$script:Targets["Toggle:$($toggleNames[$i])"] = @{ Tab = 'Settings'; X = 329; Y = 274 + 49 * $row + 22 }
 }

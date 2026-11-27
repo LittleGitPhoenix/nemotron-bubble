@@ -6,8 +6,11 @@ use crate::*;
 // Layout in content coordinates, which equal window coordinates at scroll offset 0.
 pub(crate) const MICROPHONE_SECTION_TOP: i32 = WINDOW_CARD_TOP + 62;
 pub(crate) const SETTINGS_TAB_TOGGLES_TOP: i32 = MICROPHONE_SECTION_TOP + 94;
-// The bubble position row follows the last toggle.
-pub(crate) const BUBBLE_POSITION_ROW_TOP: i32 = SETTINGS_TAB_TOGGLES_TOP + SETTINGS_TAB_TOGGLES.len() as i32 * 49;
+// The auto-stop row sits between the switches for dictation and those for the bubble.
+pub(crate) const AUTO_STOP_ROW_INDEX: usize = 8;
+pub(crate) const AUTO_STOP_ROW_TOP: i32 = settings_row_top(AUTO_STOP_ROW_INDEX);
+// The bubble position row follows the switches and the auto-stop row.
+pub(crate) const BUBBLE_POSITION_ROW_TOP: i32 = settings_row_top(SETTINGS_TAB_TOGGLES.len() + 1);
 // The visible part of the tab is the card. The rest is reached by scrolling.
 pub(crate) const SETTINGS_VIEW_TOP: i32 = WINDOW_CARD_TOP;
 pub(crate) const SETTINGS_VIEW_BOTTOM: i32 = WINDOW_HEIGHT - WINDOW_FOOTER_H;
@@ -79,6 +82,27 @@ pub(crate) unsafe fn show_bubble_position_menu(app: &Arc<AppState>) {
     show_menu_below(app, menu, settings_on_screen(app, settings_bubble_position_rect()));
 }
 
+/// Popup menu with the auto-stop durations, current one checked.
+pub(crate) unsafe fn show_auto_stop_menu(app: &Arc<AppState>) {
+    let menu = CreatePopupMenu();
+    if menu == null_mut() {
+        return;
+    }
+    let current = settings_snapshot(app).silence_auto_stop_secs;
+    for (index, seconds) in SILENCE_AUTO_STOP_CHOICES.iter().enumerate() {
+        let mut flags = MF_STRING;
+        if *seconds == current {
+            flags |= MF_CHECKED;
+        }
+        let text = wide_null(&silence_auto_stop_label(*seconds));
+        AppendMenuW(menu, flags, IDM_AUTO_STOP_BASE + index, text.as_ptr());
+        if index == 0 {
+            AppendMenuW(menu, MF_SEPARATOR, 0, null()); // between Off and the durations
+        }
+    }
+    show_menu_below(app, menu, settings_on_screen(app, settings_auto_stop_rect()));
+}
+
 /// Popup menu with "Windows default" and the connected input devices, current
 /// one checked. A selected device that is not connected is listed greyed out.
 pub(crate) unsafe fn show_microphone_menu(app: &Arc<AppState>) {
@@ -126,9 +150,9 @@ pub(crate) fn settings_microphone_rect() -> RectI {
     section_track_rect(MICROPHONE_SECTION_TOP)
 }
 
-/// The toggles of the Settings tab, top to bottom. The bubble settings come
-/// last, followed by the bubble position row.
-pub(crate) const SETTINGS_TAB_TOGGLES: [usize; 11] = [
+/// The toggles of the Settings tab, top to bottom. The auto-stop row is inserted at
+/// AUTO_STOP_ROW_INDEX. The bubble settings come last, followed by the bubble position row.
+pub(crate) const SETTINGS_TAB_TOGGLES: [usize; 10] = [
     SETTINGS_TOGGLE_STARTUP,
     SETTINGS_TOGGLE_LIVE_TYPE,
     SETTINGS_TOGGLE_FINAL_CLIPBOARD,
@@ -137,19 +161,46 @@ pub(crate) const SETTINGS_TAB_TOGGLES: [usize; 11] = [
     SETTINGS_TOGGLE_WAVEFORM,
     SETTINGS_TOGGLE_TRAY_WAVEFORM,
     SETTINGS_TOGGLE_ENTER_STOPS,
-    SETTINGS_TOGGLE_SILENCE_STOP,
     SETTINGS_TOGGLE_FLOATING_BUBBLE,
     SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW,
 ];
 
-/// The bubble position button (opens the preset popup menu), right of its label.
-pub(crate) fn settings_bubble_position_rect() -> RectI {
+/// Content y of the row at `index` in the list of switches and drop-down rows.
+pub(crate) const fn settings_row_top(index: usize) -> i32 {
+    SETTINGS_TAB_TOGGLES_TOP + index as i32 * 49
+}
+
+/// A drop-down button right of the label of the row at `row_top`.
+fn row_button_rect(row_top: i32) -> RectI {
     RectI {
         left: WINDOW_INNER_RIGHT - 150,
-        top: BUBBLE_POSITION_ROW_TOP + 6,
+        top: row_top + 6,
         right: WINDOW_INNER_RIGHT,
-        bottom: BUBBLE_POSITION_ROW_TOP + 38,
+        bottom: row_top + 38,
     }
+}
+
+/// The auto-stop button (opens the duration popup menu), right of its label.
+pub(crate) fn settings_auto_stop_rect() -> RectI {
+    row_button_rect(AUTO_STOP_ROW_TOP)
+}
+
+/// The bubble position button (opens the preset popup menu), right of its label.
+pub(crate) fn settings_bubble_position_rect() -> RectI {
+    row_button_rect(BUBBLE_POSITION_ROW_TOP)
+}
+
+/// Label, detail and value of a drop-down row at `row_top` (the button is drawn in pass 1).
+unsafe fn draw_row_button_text(dc: HDC, row_top: i32, title: &str, detail: &str, value: &str) {
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, title, 40, row_top + 1, 160, 20);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(124, 134, 148));
+    text_left(dc, detail, 40, row_top + 21, 160, 18);
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(245, 248, 252));
+    text_center(dc, &format!("{value}  \u{25BE}"), row_button_rect(row_top));
 }
 
 /// Click on the shortcut button: start capturing a new combo, or cancel a
@@ -181,13 +232,15 @@ pub(crate) fn handle_settings_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
     }
     if settings_microphone_rect().contains(x, y) {
         unsafe { show_microphone_menu(app) };
+    } else if settings_auto_stop_rect().contains(x, y) {
+        unsafe { show_auto_stop_menu(app) };
     } else if settings_bubble_position_rect().contains(x, y) {
         unsafe { show_bubble_position_menu(app) };
     }
 }
 
-/// Pass 1 of the Settings tab: shortcut button, microphone button, toggle
-/// switches, Bubble position button (all clipped to the card), and the scrollbar.
+/// Pass 1 of the Settings tab: shortcut button, microphone button, toggle switches,
+/// auto-stop and Bubble position buttons (all clipped to the card), and the scrollbar.
 pub(crate) fn draw_settings_tab_shapes(
     buf: &mut [u32],
     cw: i32,
@@ -212,6 +265,7 @@ pub(crate) fn draw_settings_tab_shapes(
         for row in rows.iter().filter(|row| row.id != SETTINGS_TOGGLE_PRELOAD) {
             draw_toggle(card, cw, view_h, toggle_rect(row.id).shifted(dy), row.enabled);
         }
+        draw_button_bg(card, cw, view_h, settings_auto_stop_rect().shifted(dy), false);
         draw_button_bg(card, cw, view_h, settings_bubble_position_rect().shifted(dy), false);
     }
     // scrollbar inside the card's padding, on the same line as the History tab's
@@ -221,7 +275,7 @@ pub(crate) fn draw_settings_tab_shapes(
 }
 
 /// Pass 2 of the Settings tab: shortcut row, microphone section, toggle texts
-/// and the Bubble position row, clipped to the card.
+/// and the auto-stop and Bubble position rows, clipped to the card.
 pub(crate) unsafe fn draw_settings_tab_text(
     dc: HDC,
     settings: &AppSettings,
@@ -280,19 +334,20 @@ pub(crate) unsafe fn draw_settings_tab_text(
         draw_toggle_text(dc, row, toggle_rect(row.id).shifted(dy));
     }
 
-    // bubble position: label + detail on the left, popup button on the right
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(233, 238, 244));
-    text_left(dc, "Bubble position", 40, BUBBLE_POSITION_ROW_TOP + 1 + dy, 160, 20);
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(124, 134, 148));
-    text_left(dc, "Preset spot on the screen.", 40, BUBBLE_POSITION_ROW_TOP + 21 + dy, 160, 18);
-    SelectObject(dc, ui_font() as _);
-    SetTextColor(dc, rgb(245, 248, 252));
-    text_center(
+    // drop-down rows: label + detail on the left, popup button on the right
+    draw_row_button_text(
         dc,
-        &format!("{}  \u{25BE}", settings.bubble_position.label()),
-        settings_bubble_position_rect().shifted(dy),
+        AUTO_STOP_ROW_TOP + dy,
+        "Auto-stop on silence",
+        "Ends a forgotten dictation.",
+        &silence_auto_stop_label(settings.silence_auto_stop_secs),
+    );
+    draw_row_button_text(
+        dc,
+        BUBBLE_POSITION_ROW_TOP + dy,
+        "Bubble position",
+        "Preset spot on the screen.",
+        settings.bubble_position.label(),
     );
 
     SelectClipRgn(dc, null_mut());

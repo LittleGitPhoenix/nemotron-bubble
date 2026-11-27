@@ -45,7 +45,6 @@ pub(crate) const SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW: usize = 2008;
 pub(crate) const SETTINGS_TOGGLE_FLOATING_BUBBLE: usize = 2009;
 pub(crate) const SETTINGS_TOGGLE_TRAY_WAVEFORM: usize = 2010;
 pub(crate) const SETTINGS_TOGGLE_ENTER_STOPS: usize = 2011;
-pub(crate) const SETTINGS_TOGGLE_SILENCE_STOP: usize = 2012;
 
 /// Show `menu` below a button of the application window and destroy it afterwards.
 /// The choice arrives as WM_COMMAND and is handled by handle_command.
@@ -141,12 +140,6 @@ pub(crate) fn setting_rows(settings: &AppSettings) -> Vec<SettingRow> {
             title: "Enter stops recording",
             detail: "Press Enter to finish and submit the text.",
             enabled: settings.enter_stops_recording,
-        },
-        SettingRow {
-            id: SETTINGS_TOGGLE_SILENCE_STOP,
-            title: "Auto-stop on silence",
-            detail: "Stop after 15s with no speech. Off to pause freely.",
-            enabled: settings.silence_auto_stop,
         },
     ]
 }
@@ -347,7 +340,9 @@ pub(crate) fn toggle_rect(id: usize) -> RectI {
         PRELOAD_ROW_TOP
     } else {
         let index = SETTINGS_TAB_TOGGLES.iter().position(|t| *t == id).unwrap_or(0);
-        SETTINGS_TAB_TOGGLES_TOP + index as i32 * 49
+        // The auto-stop row takes one place in the list of switches.
+        let row = if index >= AUTO_STOP_ROW_INDEX { index + 1 } else { index };
+        settings_row_top(row)
     };
     RectI {
         left: 32,

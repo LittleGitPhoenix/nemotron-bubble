@@ -298,6 +298,11 @@ pub(crate) fn handle_command(command: usize) {
                 select_microphone_menu_item(app, id - IDM_MIC_BASE);
             }
         }
+        id if (IDM_AUTO_STOP_BASE..IDM_AUTO_STOP_BASE + SILENCE_AUTO_STOP_CHOICES.len()).contains(&id) => {
+            if let Some(app) = APP.get() {
+                select_silence_auto_stop(app, SILENCE_AUTO_STOP_CHOICES[id - IDM_AUTO_STOP_BASE]);
+            }
+        }
         id if (IDM_COMPUTE_BASE..IDM_COMPUTE_BASE + ComputeChoice::ALL.len()).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_compute(app, ComputeChoice::ALL[id - IDM_COMPUTE_BASE]);

@@ -18,6 +18,8 @@ pub(crate) const IDM_BUBBLE_POS_BASE: usize = 1400;
 // Microphone popup menu: 0 = Windows default, then one id per listed input device.
 pub(crate) const IDM_MIC_BASE: usize = 1500;
 pub(crate) const IDM_MIC_MAX: usize = 64;
+// Auto-stop popup menu: one id per SILENCE_AUTO_STOP_CHOICES entry, in that order.
+pub(crate) const IDM_AUTO_STOP_BASE: usize = 1600;
 // The currently-installed tray HICON. Animated icons are swapped in via NIM_MODIFY
 // and the previous one destroyed, so this tracks what needs cleanup.
 pub(crate) static CURRENT_TRAY_ICON: AtomicIsize = AtomicIsize::new(0);

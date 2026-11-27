@@ -594,13 +594,11 @@ pub(crate) unsafe fn on_anim_tick(hwnd: HWND) {
 
     // Auto-stop after a stretch of silence so a forgotten recording cannot run
     // forever (and let the model's audio buffer grow without bound). Optional.
-    if recording
-        && settings.silence_auto_stop
-        && silent_for >= Duration::from_secs(SILENCE_AUTO_STOP_SECS)
-    {
+    let auto_stop_secs = settings.silence_auto_stop_secs;
+    if recording && auto_stop_secs > 0 && silent_for >= Duration::from_secs(auto_stop_secs) {
         stop_recording(app);
         update_ui(app, |ui| {
-            ui.status = format!("Auto-stopped after {SILENCE_AUTO_STOP_SECS}s of silence.");
+            ui.status = format!("Auto-stopped after {} of silence.", silence_auto_stop_label(auto_stop_secs));
         });
         return;
     }

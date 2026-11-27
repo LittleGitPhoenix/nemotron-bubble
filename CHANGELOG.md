@@ -15,6 +15,7 @@ ___
 - When no speech model is installed, the first model whose download finishes is selected automatically.
 - On a first start without any model the application window opens automatically on the *Model* tab and a note over the dimmed tab explains what to do and marks the relevant controls in the background.
 - If the application is started and the model selected in the settings is missing but the other one is installed the application window opens automatically on the *Model* tab and a note over the dimmed tab explains to either select the installed model or to download the selected one. This situation can happen if only settings are copied to another installation.
+- *Auto-stop on silence* on the *Settings* tab is a drop-down instead of a switch. Besides *Off* it offers 10 s, 15 s (the default as before), 30 s, 1 min, 2 min and 5 min. It is saved as `silence_auto_stop_secs` in `settings.json`, with `0` for *Off*. An auto-stop switched off in an older `settings.json` stays off.
 
 ### Fixed
 

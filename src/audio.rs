@@ -2,8 +2,6 @@
 
 use crate::*;
 
-// Auto-stop recording after this many seconds without detected speech.
-pub(crate) const SILENCE_AUTO_STOP_SECS: u64 = 15;
 // Raw mic RMS above which we treat the user as speaking (for the silence auto-stop).
 // Compared against true loudness, NOT the visually-boosted bar height.
 pub(crate) const VOICE_RMS_THRESHOLD: f32 = 0.02;
