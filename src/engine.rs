@@ -255,6 +255,11 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         Ok(())
                     };
                     update_ui(&app, |ui| {
+                        // New words prove that the user is still speaking, even when the
+                        // microphone is too quiet for the loudness check in `report_level`.
+                        if !text.is_empty() {
+                            ui.last_voice = Instant::now();
+                        }
                         ui.status = if let Err(err) = type_result {
                             format!("Live typing failed: {err}")
                         } else if live_type {

@@ -16,6 +16,10 @@ ___
 - On a first start without any model the application window opens automatically on the *Model* tab and a note over the dimmed tab explains what to do and marks the relevant controls in the background.
 - If the application is started and the model selected in the settings is missing but the other one is installed the application window opens automatically on the *Model* tab and a note over the dimmed tab explains to either select the installed model or to download the selected one. This situation can happen if only settings are copied to another installation.
 
+### Fixed
+
+- *Auto-stop on silence* ended a dictation after 15 s although the user was speaking and the speech was transcribed, if the microphone level was low. Every recognized word now counts as speech as well.
+
 ___
 
 ## 1.0.0
