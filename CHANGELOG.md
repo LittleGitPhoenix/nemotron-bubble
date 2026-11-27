@@ -19,6 +19,7 @@ ___
 ### Fixed
 
 - *Auto-stop on silence* ended a dictation after 15 s although the user was speaking and the speech was transcribed, if the microphone level was low. Every recognized word now counts as speech as well.
+- The waveform of the floating bubble stayed flat at a low microphone level. It now adapts to the background noise and the speech level of the microphone, so it looks the same at any input volume.
 
 ___
 

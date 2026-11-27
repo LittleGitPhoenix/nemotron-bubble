@@ -296,6 +296,8 @@ pub(crate) struct InputCallback {
     pub(crate) app: Arc<AppState>,
     pub(crate) was_recording: bool,
     pub(crate) resampler: LinearResampler,
+    // Lives as long as the stream, so the next dictation starts with what it learned.
+    pub(crate) meter: LevelMeter,
 }
 
 impl InputCallback {
@@ -313,6 +315,7 @@ impl InputCallback {
             app,
             was_recording: false,
             resampler: LinearResampler::new(source_rate, NEMOTRON_SAMPLE_RATE),
+            meter: LevelMeter::new(source_rate),
         }
     }
 
@@ -342,7 +345,7 @@ impl InputCallback {
 
         let mono = downmix_to_mono(samples, self.channels);
         if !mono.is_empty() {
-            let (level, rms) = audio_level(&mono);
+            let (level, rms) = self.meter.measure(&mono);
             report_level(&self.app, level, rms);
         }
 
@@ -373,18 +376,65 @@ where
     mono
 }
 
-/// Loudness of a non-empty mono block: the waveform bar height in 0.0..=1.0 and the RMS.
-fn audio_level(mono: &[f32]) -> (f32, f32) {
-    // Loudness -> bar height. NOISE_FLOOR gates hiss; GAIN sets sensitivity so
-    // ordinary speech reaches most of the height; the sub-1.0 exponent lifts
-    // quiet syllables so they read as tall bumps instead of tiny specks.
-    const NOISE_FLOOR: f32 = 0.006;
-    const GAIN: f32 = 14.0;
-    const SHAPE: f32 = 0.6;
-    let rms = (mono.iter().map(|v| v * v).sum::<f32>() / mono.len() as f32).sqrt();
-    let norm = ((rms - NOISE_FLOOR) * GAIN).clamp(0.0, 1.0);
-    let level = norm.powf(SHAPE);
-    (level, rms)
+/// Turns the loudness of microphone blocks into waveform bar heights that do not depend
+/// on the input volume. It learns the background noise and the recent speech peak of the
+/// current microphone and draws each block relative to both, so a quiet microphone shows
+/// the same waveform as a loud one.
+pub(crate) struct LevelMeter {
+    sample_rate: f32,
+    // None until the first block was measured.
+    noise_floor: Option<f32>,
+    peak: f32,
+}
+
+impl LevelMeter {
+    // Without a quieter block the noise floor doubles every this many seconds. The short
+    // gaps between syllables pull it back down, so only a lasting sound is learned as noise.
+    const NOISE_DOUBLING_SECS: f32 = 4.0;
+    // The speech peak halves every this many seconds after the last loud block. Long
+    // enough that the first word after a short pause is not drawn at full height again.
+    const PEAK_HALF_LIFE_SECS: f32 = 6.0;
+    // Full height is this many times the recent peak, so even the loudest syllables
+    // do not all hit the top.
+    const HEADROOM: f32 = 1.25;
+    // The lowest noise floor. Keeps the ratios below meaningful for digital silence.
+    const MIN_NOISE_FLOOR: f32 = 1e-4;
+    // A block must be this many times louder than the noise floor (+12 dB) to show a bar.
+    const GATE_ABOVE_NOISE: f32 = 4.0;
+    // Full height is never reached below this many times the noise floor (+30 dB),
+    // so background hiss and small sounds in a quiet room stay small.
+    const MIN_PEAK_ABOVE_NOISE: f32 = 32.0;
+    // The sub-1.0 exponent lifts quiet syllables a little so they do not vanish.
+    const SHAPE: f32 = 0.8;
+
+    pub(crate) fn new(sample_rate: f64) -> Self {
+        Self {
+            sample_rate: sample_rate as f32,
+            noise_floor: None,
+            peak: 0.0,
+        }
+    }
+
+    /// Loudness of a non-empty mono block: the waveform bar height in 0.0..=1.0 and the RMS.
+    pub(crate) fn measure(&mut self, mono: &[f32]) -> (f32, f32) {
+        let rms = (mono.iter().map(|v| v * v).sum::<f32>() / mono.len() as f32).sqrt();
+        let seconds = mono.len() as f32 / self.sample_rate;
+
+        let loudness = rms.max(Self::MIN_NOISE_FLOOR);
+        let noise_floor = match self.noise_floor {
+            Some(previous) if previous < loudness => {
+                (previous * 2.0_f32.powf(seconds / Self::NOISE_DOUBLING_SECS)).min(loudness)
+            }
+            _ => loudness,
+        };
+        self.noise_floor = Some(noise_floor);
+        self.peak = (self.peak * 0.5_f32.powf(seconds / Self::PEAK_HALF_LIFE_SECS)).max(rms);
+
+        let gate = noise_floor * Self::GATE_ABOVE_NOISE;
+        let full = (self.peak * Self::HEADROOM).max(noise_floor * Self::MIN_PEAK_ABOVE_NOISE);
+        let norm = ((rms - gate) / (full - gate)).clamp(0.0, 1.0);
+        (norm.powf(Self::SHAPE), rms)
+    }
 }
 
 pub(crate) struct LinearResampler {
@@ -640,22 +690,80 @@ mod tests {
         assert_eq!(downmix_to_mono([0.3, 0.3, 0.3, 0.9].into_iter(), 3), [0.3]);
     }
 
-    #[test]
-    fn level_is_zero_for_silence_and_noise() {
-        assert_eq!(audio_level(&[0.0; 64]), (0.0, 0.0));
-        let (level, rms) = audio_level(&[0.005; 64]);
-        assert_eq!(level, 0.0);
-        assert!((rms - 0.005).abs() < 1e-6);
+    // 10 ms blocks at 48 kHz, like a typical WASAPI callback.
+    const METER_RATE: f64 = 48_000.0;
+    const METER_BLOCK: usize = 480;
+
+    /// Bar heights for `blocks` blocks of constant amplitude, fed one after another.
+    fn meter_levels(meter: &mut LevelMeter, amplitude: f32, blocks: usize) -> Vec<f32> {
+        (0..blocks).map(|_| meter.measure(&[amplitude; METER_BLOCK]).0).collect()
     }
 
     #[test]
-    fn level_rises_with_loudness_and_is_capped() {
-        let (quiet, _) = audio_level(&[0.02; 64]);
-        let (louder, _) = audio_level(&[0.05; 64]);
-        assert!(0.0 < quiet && quiet < louder && louder < 1.0, "{quiet} < {louder}");
-        let (loud, rms) = audio_level(&[0.5; 64]);
-        assert_eq!(loud, 1.0);
+    fn level_is_zero_for_silence_and_steady_noise() {
+        let mut meter = LevelMeter::new(METER_RATE);
+        assert_eq!(meter.measure(&[0.0; METER_BLOCK]), (0.0, 0.0));
+        let levels = meter_levels(&mut LevelMeter::new(METER_RATE), 0.005, 1_000);
+        assert!(levels.iter().all(|level| *level == 0.0), "{levels:?}");
+    }
+
+    #[test]
+    fn level_reports_the_rms() {
+        let (_, rms) = LevelMeter::new(METER_RATE).measure(&[0.5; METER_BLOCK]);
         assert!((rms - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn level_rises_with_loudness_and_leaves_headroom() {
+        let mut meter = LevelMeter::new(METER_RATE);
+        meter_levels(&mut meter, 0.001, 100);
+        let loud = meter_levels(&mut meter, 0.05, 1)[0];
+        let quiet = meter_levels(&mut meter, 0.02, 1)[0];
+        let quieter = meter_levels(&mut meter, 0.01, 1)[0];
+        assert!(0.7 < loud && loud < 1.0, "{loud}");
+        assert!(0.0 < quieter && quieter < quiet && quiet < loud, "{quieter} < {quiet} < {loud}");
+    }
+
+    #[test]
+    fn level_keeps_small_sounds_in_a_quiet_room_small() {
+        let mut meter = LevelMeter::new(METER_RATE);
+        meter_levels(&mut meter, 0.001, 100);
+        assert_eq!(meter_levels(&mut meter, 0.004, 1)[0], 0.0);
+        let rustle = meter_levels(&mut meter, 0.008, 1)[0];
+        assert!(0.0 < rustle && rustle < 0.3, "{rustle}");
+    }
+
+    #[test]
+    fn level_does_not_depend_on_the_input_volume() {
+        // Noise, speech and a pause at full and at a tenth of the volume.
+        let pattern = |scale: f32| {
+            let mut meter = LevelMeter::new(METER_RATE);
+            let mut levels = meter_levels(&mut meter, 0.002 * scale, 100);
+            levels.extend(meter_levels(&mut meter, 0.05 * scale, 30));
+            levels.extend(meter_levels(&mut meter, 0.02 * scale, 30));
+            levels.extend(meter_levels(&mut meter, 0.002 * scale, 30));
+            levels
+        };
+        let loud = pattern(1.0);
+        let quiet = pattern(0.1);
+        for (index, (a, b)) in loud.iter().zip(&quiet).enumerate() {
+            assert!((a - b).abs() < 1e-3, "block {index}: {a} vs {b}");
+        }
+        assert!(loud[100] > 0.7 && loud[150] > 0.2, "speech must show clear bars");
+    }
+
+    #[test]
+    fn level_shows_recorded_speech_at_low_volume() {
+        let wav = read_wav(include_bytes!("../tests/data/audio-test.wav")).unwrap();
+        let mono = downmix_to_mono(wav.samples.iter().copied(), wav.channels);
+        let block = wav.sample_rate as usize / 100;
+        for scale in [1.0, 0.1] {
+            let mut meter = LevelMeter::new(wav.sample_rate as f64);
+            let scaled: Vec<f32> = mono.iter().map(|sample| sample * scale).collect();
+            let levels: Vec<f32> = scaled.chunks(block).map(|chunk| meter.measure(chunk).0).collect();
+            let visible = levels.iter().filter(|level| **level > 0.2).count();
+            assert!(visible * 10 > levels.len(), "scale {scale}: only {visible} of {} blocks visible", levels.len());
+        }
     }
 }
 
