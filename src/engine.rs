@@ -144,6 +144,7 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                             loaded.on_gpu,
                         );
                         model = Some(loaded.model);
+                        clear_model_notice(&app);
                         model_path = loaded.dir;
                         on_gpu = loaded.on_gpu;
                         let status = ready_status(&settings_snapshot(&app));
@@ -154,10 +155,10 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                     }
                     Err(err) => {
                         preload_failed = true;
-                        report_model_error(&err);
+                        let error_status = report_model_error(&app, &err);
                         update_ui(&app, |ui| {
-                            ui.status = "The speech model failed to load. See the log.".to_string();
-                            ui.model_status = "Failed to load - see log.".to_string();
+                            ui.status = error_status.status;
+                            ui.model_status = error_status.model_status;
                         });
                     }
                 }
@@ -203,16 +204,17 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                             );
                             update_ui(&app, |ui| ui.model_status = label);
                             model = Some(loaded.model);
+                            clear_model_notice(&app);
                             model_path = loaded.dir;
                             on_gpu = loaded.on_gpu;
                         }
                         Err(err) => {
-                            report_model_error(&err);
+                            let error_status = report_model_error(&app, &err);
                             app.recording.store(false, Ordering::SeqCst);
                             update_ui(&app, |ui| {
-                                ui.model_status = "Failed to load - see log.".to_string();
+                                ui.model_status = error_status.model_status;
                                 ui.recording = false;
-                                ui.status = "The speech model failed to load. See the log.".to_string();
+                                ui.status = error_status.status;
                             });
                             continue;
                         }
@@ -253,6 +255,11 @@ pub(crate) fn run_engine(rx: Receiver<EngineCommand>, app: Arc<AppState>) {
                         Ok(())
                     };
                     update_ui(&app, |ui| {
+                        // New words prove that the user is still speaking, even when the
+                        // microphone is too quiet for the loudness check in `report_level`.
+                        if !text.is_empty() {
+                            ui.last_voice = Instant::now();
+                        }
                         ui.status = if let Err(err) = type_result {
                             format!("Live typing failed: {err}")
                         } else if live_type {

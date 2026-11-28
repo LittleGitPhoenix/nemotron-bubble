@@ -4,6 +4,8 @@ use crate::*;
 
 pub(crate) const CLASS_NAME: &str = "NemotronBubbleWindow";
 pub(crate) const WM_UI_UPDATE: u32 = WM_APP + 1;
+/// Open the application window on the Model tab to show the model notice (posted by any thread).
+pub(crate) const WM_SHOW_MODEL_NOTICE: u32 = WM_APP + 2;
 
 pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
     let hinstance = GetModuleHandleW(null());
@@ -56,7 +58,7 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
     add_tray_icon(hwnd);
     create_bubble_tooltip(hwnd);
     // A microphone missing at startup was recorded before this window existed.
-    sync_mic_indicator(hwnd);
+    sync_indicators(hwnd);
 
     let application_window_title = wide_null("Nemotron Bubble");
     let application_window_hwnd = CreateWindowExW(
@@ -99,8 +101,16 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
         ShowWindow(hwnd, SW_HIDE);
     }
 
+    // A selected model that is not installed opens the Model tab with its notice,
+    // whether or not the model would be preloaded.
+    if let Some(notice) = selected_model_notice(&settings_snapshot(&app)) {
+        show_model_notice(&app, notice);
+    }
+
     // Drive waveform + tray animation from a single UI-thread timer.
     SetTimer(hwnd, ANIM_TIMER_ID, ANIM_INTERVAL_MS, None);
+    // Asks regularly whether an automatic update check is due (setting off: nothing happens).
+    SetTimer(hwnd, UPDATE_TIMER_ID, UPDATE_TIMER_MS, None);
 
     let mut msg: MSG = std::mem::zeroed();
     while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
@@ -201,12 +211,19 @@ pub(crate) unsafe extern "system" fn wnd_proc(
             handle_command(loword(wparam as usize) as usize);
             0
         }
+        // Entries of the owner-drawn popup menus (src/ui/menu.rs).
+        WM_MEASUREITEM if measure_menu_item(lparam) => 1,
+        WM_DRAWITEM if draw_menu_item(lparam) => 1,
         WM_TIMER => {
             if wparam == ANIM_TIMER_ID {
                 on_anim_tick(hwnd);
             } else if wparam == MIC_RETRY_TIMER_ID {
                 if let Some(app) = APP.get() {
                     retry_audio_capture(app);
+                }
+            } else if wparam == UPDATE_TIMER_ID {
+                if let Some(app) = APP.get() {
+                    update_timer_tick(app);
                 }
             } else if wparam == COPY_FLASH_TIMER_ID {
                 // the "copied" checkmark has been shown long enough
@@ -233,12 +250,19 @@ pub(crate) unsafe extern "system" fn wnd_proc(
             }
             0
         }
+        WM_SHOW_MODEL_NOTICE => {
+            if let Some(app) = APP.get() {
+                set_settings_tab(app, TAB_MODEL);
+                show_application_window(WindowOrigin::Bubble);
+            }
+            0
+        }
         WM_UI_UPDATE => {
             if is_application_window(hwnd) {
                 InvalidateRect(hwnd, null(), 0);
             } else {
                 render_bubble(hwnd);
-                sync_mic_indicator(hwnd);
+                sync_indicators(hwnd);
             }
             0
         }
@@ -248,6 +272,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
                     let _ = app.engine_tx.send(EngineCommand::Shutdown);
                     KillTimer(hwnd, ANIM_TIMER_ID);
                     KillTimer(hwnd, MIC_RETRY_TIMER_ID);
+                    KillTimer(hwnd, UPDATE_TIMER_ID);
                     UnregisterHotKey(hwnd, HOTKEY_ID);
                     remove_tray_icon(hwnd);
                     PostQuitMessage(0);
@@ -263,6 +288,11 @@ pub(crate) fn handle_command(command: usize) {
     match command {
         IDM_START_STOP => toggle_recording(),
         IDM_SHOW_HIDE => toggle_window_visibility(),
+        IDM_UPDATE => {
+            if let Some(app) = APP.get() {
+                open_update_panel(app, WindowOrigin::Tray);
+            }
+        }
         id if (IDM_MODEL_BASE..IDM_MODEL_BASE + ModelChoice::ALL.len()).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_model(app, ModelChoice::ALL[id - IDM_MODEL_BASE]);
@@ -273,14 +303,14 @@ pub(crate) fn handle_command(command: usize) {
                 select_language(app, LANGUAGES[id - IDM_LANG_BASE].0);
             }
         }
-        id if (IDM_BUBBLE_POS_BASE..IDM_BUBBLE_POS_BASE + BubblePosition::ALL.len()).contains(&id) => {
-            if let Some(app) = APP.get() {
-                select_bubble_position(app, BubblePosition::ALL[id - IDM_BUBBLE_POS_BASE]);
-            }
-        }
         id if (IDM_MIC_BASE..IDM_MIC_BASE + IDM_MIC_MAX).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_microphone_menu_item(app, id - IDM_MIC_BASE);
+            }
+        }
+        id if (IDM_AUTO_STOP_BASE..IDM_AUTO_STOP_BASE + SILENCE_AUTO_STOP_CHOICES.len()).contains(&id) => {
+            if let Some(app) = APP.get() {
+                select_silence_auto_stop(app, SILENCE_AUTO_STOP_CHOICES[id - IDM_AUTO_STOP_BASE]);
             }
         }
         id if (IDM_COMPUTE_BASE..IDM_COMPUTE_BASE + ComputeChoice::ALL.len()).contains(&id) => {

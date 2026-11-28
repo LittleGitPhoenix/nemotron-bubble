@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-	Picks an entry of the open popup menu of a test instance (Language, Microphone, Bubble position, tray menu).
+	Picks an entry of the open popup menu of a test instance (Language, Microphone, Auto-stop, tray menu).
 .DESCRIPTION
 	Popup menus block the app until they close, and they are driven by keys: -Index n presses Down n times and Enter.
 	The first Down highlights the first entry, separators are skipped. Take a screenshot with -Screen first to count.

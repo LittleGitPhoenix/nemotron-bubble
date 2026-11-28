@@ -16,6 +16,7 @@ mod output;
 mod settings;
 mod sound;
 mod ui;
+mod update;
 mod util;
 
 #[cfg(feature = "assets")]
@@ -31,6 +32,7 @@ use output::*;
 use settings::*;
 use sound::*;
 use ui::*;
+use update::*;
 use util::*;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -59,7 +61,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, ClientToScreen, CreateBitmap,
     CreateFontW, CreateRoundRectRgn, DEFAULT_CHARSET,
     DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_EDITCONTROL, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_TOP, DT_VCENTER,
-    DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD,
+    DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint, FF_DONTCARE, FW_BOLD, FW_NORMAL, FW_SEMIBOLD,
     HDC, IntersectClipRect, InvalidateRect, OUT_DEFAULT_PRECIS, PAINTSTRUCT, SelectClipRgn,
     SelectObject,
     SetBkMode, SetTextColor, SetWindowRgn, TRANSPARENT,
@@ -105,11 +107,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     IsWindow, IsWindowVisible, KillTimer, LoadCursorW, LoadIconW, LWA_ALPHA, MB_ICONERROR,
     MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MESSAGEBOX_STYLE, MF_CHECKED, MF_GRAYED,
     HMENU, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW,
-    PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW,
+    PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW, SM_CXMENUCHECK, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW,
     SW_SHOWNA, SWP_NOACTIVATE, SWP_NOSIZE, SetForegroundWindow,
-    SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, TPM_RIGHTBUTTON,
+    SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS,
     TrackPopupMenu, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WM_APP, WM_COMMAND, WM_CREATE,
-    WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_LBUTTONDOWN,
+    WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_HOTKEY, WM_LBUTTONDOWN, WM_MEASUREITEM,
     WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN,
     WM_TIMER, WM_USER, WNDCLASSW,
     WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -131,6 +133,8 @@ pub(crate) struct UiState {
     /// Why no microphone could be opened, None while one is available. The bubble
     /// and the tray icon show it and give the reason in their tooltips.
     pub(crate) mic_error: Option<String>,
+    /// The annotation over the Model tab when the selected model is not installed.
+    pub(crate) model_notice: Option<ModelNotice>,
     pub(crate) waveform: Vec<f32>,
     pub(crate) current_level: f32,
     pub(crate) last_voice: Instant,
@@ -149,6 +153,8 @@ pub(crate) struct AppState {
     pub(crate) history_content_h: AtomicI32,
     pub(crate) history_hits: Mutex<Vec<(RectI, usize)>>,
     pub(crate) copied_flash: Mutex<Option<usize>>,
+    /// The callout of the model notice as last painted, so clicks on it do not reach the controls below.
+    pub(crate) model_notice_callout: Mutex<Option<RectI>>,
     pub(crate) capturing_hotkey: AtomicBool,
     /// Active tab of the application window (TAB_HISTORY / TAB_MODEL / TAB_SETTINGS).
     pub(crate) settings_tab: AtomicUsize,
@@ -158,6 +164,9 @@ pub(crate) struct AppState {
     /// cancel request for the running download (only one runs at a time).
     pub(crate) downloads: Mutex<Vec<ModelDownloadState>>,
     pub(crate) download_cancel: AtomicBool,
+    /// App updates from GitHub (src/update.rs), and the cancel request for a running update download.
+    pub(crate) update: Mutex<UpdateState>,
+    pub(crate) update_cancel: AtomicBool,
     pub(crate) enter_pending: AtomicBool,
     pub(crate) drag: Mutex<Option<DragState>>,
     pub(crate) settings: Mutex<AppSettings>,
@@ -234,6 +243,7 @@ pub(crate) fn run_app() -> Result<()> {
     let settings = load_settings();
     save_settings(&settings);
     apply_startup_setting(settings.start_with_windows);
+    remove_update_leftovers();
     ensure_sound_assets();
     let history = load_history(settings.history_limit);
     let initial_status = ready_status(&settings);
@@ -249,11 +259,14 @@ pub(crate) fn run_app() -> Result<()> {
         history_content_h: AtomicI32::new(0),
         history_hits: Mutex::new(Vec::new()),
         copied_flash: Mutex::new(None),
+        model_notice_callout: Mutex::new(None),
         capturing_hotkey: AtomicBool::new(false),
         settings_tab: AtomicUsize::new(TAB_HISTORY),
         settings_scroll: AtomicI32::new(0),
         downloads: Mutex::new(vec![ModelDownloadState::default(); DOWNLOADABLE_MODELS.len()]),
         download_cancel: AtomicBool::new(false),
+        update: Mutex::new(UpdateState::default()),
+        update_cancel: AtomicBool::new(false),
         enter_pending: AtomicBool::new(false),
         drag: Mutex::new(None),
         settings: Mutex::new(settings),
@@ -264,6 +277,7 @@ pub(crate) fn run_app() -> Result<()> {
             status: initial_status,
             model_status: "Not loaded yet.".to_string(),
             mic_error: None,
+            model_notice: None,
             waveform: vec![0.0; WAVE_BARS],
             current_level: 0.0,
             last_voice: Instant::now(),
@@ -295,6 +309,9 @@ pub(crate) fn run_app() -> Result<()> {
     }
 
     close_audio_capture();
+    // Only now, with the shortcut, the tray icon and the microphone released, the
+    // exe of an installed update can take over.
+    restart_after_update();
     Ok(())
 }
 

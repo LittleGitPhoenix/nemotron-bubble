@@ -1,6 +1,7 @@
 //! Drawing toolkit: the off-screen canvas, anti-aliased shapes, text helpers and fonts.
 
 use crate::*;
+use windows_sys::Win32::Graphics::Gdi::GetTextExtentPoint32W;
 
 pub(crate) static UI_FONT: OnceCell<isize> = OnceCell::new();
 pub(crate) static TITLE_FONT: OnceCell<isize> = OnceCell::new();
@@ -8,6 +9,8 @@ pub(crate) static SMALL_FONT: OnceCell<isize> = OnceCell::new();
 pub(crate) static ICON_FONT: OnceCell<isize> = OnceCell::new();
 pub(crate) static ICON_FONT_LARGE: OnceCell<isize> = OnceCell::new();
 pub(crate) static TINY_FONT: OnceCell<isize> = OnceCell::new();
+pub(crate) static HEADING_FONT: OnceCell<isize> = OnceCell::new();
+pub(crate) static BADGE_FONT: OnceCell<isize> = OnceCell::new();
 #[derive(Copy, Clone)]
 pub(crate) struct RectI {
     pub(crate) left: i32,
@@ -119,8 +122,13 @@ impl Canvas {
 
     /// Copy the buffer to a destination DC (opaque double-buffer blit).
     pub(crate) unsafe fn blit_to(&self, dst: HDC) {
+        self.blit_to_at(dst, 0, 0);
+    }
+
+    /// Copy the buffer to a destination DC with its top left corner at (x, y).
+    pub(crate) unsafe fn blit_to_at(&self, dst: HDC, x: i32, y: i32) {
         GdiFlush();
-        BitBlt(dst, 0, 0, self.w, self.h, self.hdc, 0, 0, SRCCOPY);
+        BitBlt(dst, x, y, self.w, self.h, self.hdc, 0, 0, SRCCOPY);
     }
 }
 
@@ -390,6 +398,19 @@ pub(crate) fn icon_font_large() -> isize {
     *ICON_FONT_LARGE.get_or_init(|| unsafe { create_font_face("Segoe MDL2 Assets", -15, FW_NORMAL as i32) })
 }
 
+/// Width of `text` in `font`, measured on the screen, so no canvas is needed
+/// (e.g. for hit areas that depend on a text's width).
+pub(crate) unsafe fn text_width_in(font: isize, text: &str) -> i32 {
+    let screen = GetDC(null_mut());
+    let old_font = SelectObject(screen, font as _);
+    let wide: Vec<u16> = text.encode_utf16().collect();
+    let mut size = SIZE { cx: 0, cy: 0 };
+    GetTextExtentPoint32W(screen, wide.as_ptr(), wide.len() as i32, &mut size);
+    SelectObject(screen, old_font);
+    ReleaseDC(null_mut(), screen);
+    size.cx
+}
+
 pub(crate) fn rgb(red: u8, green: u8, blue: u8) -> u32 {
     red as u32 | ((green as u32) << 8) | ((blue as u32) << 16)
 }
@@ -412,4 +433,14 @@ pub(crate) unsafe fn text_left_ellipsis(dc: HDC, text: &str, rect: RectI) {
         &mut r,
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
     );
+}
+
+/// Semi-bold headings, e.g. the title of the model notice.
+pub(crate) fn heading_font() -> isize {
+    *HEADING_FONT.get_or_init(|| unsafe { create_font(-15, FW_SEMIBOLD as i32) })
+}
+
+/// The bold numbers and letters inside the step badges of the model notice.
+pub(crate) fn badge_font() -> isize {
+    *BADGE_FONT.get_or_init(|| unsafe { create_font(-11, FW_BOLD as i32) })
 }

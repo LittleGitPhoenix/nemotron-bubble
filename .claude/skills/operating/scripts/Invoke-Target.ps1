@@ -52,8 +52,8 @@ if ($clickTab)
 if ($Target -and $clickTab -eq 'Settings')
 {
 	# Scroll to a known offset: the top, or the bottom for rows below the visible card.
-	if ($clickY -lt $script:SettingsViewBottom - 20) { Send-NemoWheel $window -3 }
-	else { Send-NemoWheel $window 3; $clickY -= $script:SettingsTabMaxScroll }
+	if ($clickY -lt $script:SettingsViewBottom - 20) { Send-NemoWheel $window -4 }
+	else { Send-NemoWheel $window 4; $clickY -= $script:SettingsTabMaxScroll }
 }
 Send-NemoClick $window $clickX $clickY
 $X = $clickX

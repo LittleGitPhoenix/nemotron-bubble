@@ -5,6 +5,40 @@ All notable changes to **Nemotron Bubble** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ___
 
+## 1.1.0
+
+📅 _2026-11-28_
+✏️ _LittlePhoenix_
+
+### Added
+
+- App updates from GitHub. **Check now** on the *Settings* tab looks for a new version, and the new setting *Check for updates automatically* (off by default, `check_updates_automatically` in `settings.json`) looks 15 s after the start and then every hour. Only stable versions are offered.
+- An available version is announced by an always visible arrow badge on the top-left edge of the floating bubble, a pill with the new version in the footer of the application window, a dot on the tray icon, a second line in the tray tooltip and the entry *Update to x.y.z...* in the tray menu. Each of them opens the update panel.
+- The update panel over the application window offers *Update now*, *Skip this version*, *Later* and a link to the release notes on GitHub. *Update now* downloads the release archive into `update\` next to the exe, resumes an interrupted download, checks it against the SHA-256 published with the release, replaces the exe and its files and restarts the app. Settings, history and models are kept. *Skip this version* hides the announcements until a newer version appears (`skipped_update` in `settings.json`).
+- The release workflow keeps `updater.json` in the GitHub release `nemotron-bubble-Updater` up to date for every stable version. Versions with a pre-release suffix become GitHub pre-releases.
+
+### Changed
+
+- When no speech model is installed, the first model whose download finishes is selected automatically.
+- On a first start without any model the application window opens automatically on the *Model* tab and a note over the dimmed tab explains what to do and marks the relevant controls in the background.
+- If the application is started and the model selected in the settings is missing but the other one is installed the application window opens automatically on the *Model* tab and a note over the dimmed tab explains to either select the installed model or to download the selected one. This situation can happen if only settings are copied to another installation.
+- *Auto-stop on silence* on the *Settings* tab is a drop-down instead of a switch. Besides *Off* it offers 10 s, 15 s (the default as before), 30 s, 1 min, 2 min and 5 min. It is saved as `silence_auto_stop_secs` in `settings.json`, with `0` for *Off*. An auto-stop switched off in an older `settings.json` stays off.
+- The *Bubble position* is picked on a small picture of the screen with six clickable spots instead of a popup menu. The line below the setting names the current position.
+- The popup menus (*Microphone*, *Auto-stop on silence*, *Language* and the tray menu with its submenus) are drawn in the dark colors of the application window instead of the light Windows style.
+
+### Fixed
+
+- *Auto-stop on silence* ended a dictation after 15 s although the user was speaking and the speech was transcribed, if the microphone level was low. Every recognized word now counts as speech as well.
+- The waveform of the floating bubble stayed flat at a low microphone level. It now adapts to the background noise and the speech level of the microphone, so it looks the same at any input volume.
+
+### References
+
+⚪ flate2 **1.1.9**  
+⚪ semver **1.0.28**  
+⚪ tar **0.4.46**  
+
+___
+
 ## 1.0.0
 
 📅 _2026-11-27_

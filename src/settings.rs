@@ -18,7 +18,9 @@ pub(crate) struct AppSettings {
     pub(crate) show_floating_bubble: bool,
     pub(crate) tray_waveform_enabled: bool,
     pub(crate) enter_stops_recording: bool,
-    pub(crate) silence_auto_stop: bool,
+    /// Seconds without speech after which a dictation stops on its own. 0 is Off.
+    /// Replaces the switch "silence_auto_stop" of 1.0.0, see `load_settings`.
+    pub(crate) silence_auto_stop_secs: u64,
     pub(crate) hotkey_mods: u32,
     pub(crate) hotkey_vk: u32,
     pub(crate) paste_delay_ms: u64,
@@ -38,6 +40,11 @@ pub(crate) struct AppSettings {
     /// Input device by its Windows name, e.g. "Microphone (USB Audio)". Empty:
     /// follow the Windows default input device.
     pub(crate) microphone: String,
+    /// Look for a new app version on GitHub after the start and every hour.
+    pub(crate) check_updates_automatically: bool,
+    /// The app version the user chose to skip, e.g. "1.2.0". Only a newer version
+    /// is offered again. Empty: nothing skipped.
+    pub(crate) skipped_update: String,
 }
 
 /// Preset positions of the floating bubble, in the primary monitor's work area
@@ -188,6 +195,19 @@ pub(crate) fn language_label(code: &str) -> &'static str {
         .unwrap_or("Auto-detect")
 }
 
+/// The durations offered for *Auto-stop on silence*, in seconds and menu order. 0 is Off.
+pub(crate) const SILENCE_AUTO_STOP_CHOICES: [u64; 7] = [0, 10, 15, 30, 60, 120, 300];
+
+/// Display text of an auto-stop duration, e.g. "Off", "30 s" or "2 min".
+/// Values edited by hand into settings.json are shown as they are.
+pub(crate) fn silence_auto_stop_label(seconds: u64) -> String {
+    match seconds {
+        0 => "Off".to_string(),
+        seconds if seconds % 60 == 0 => format!("{} min", seconds / 60),
+        seconds => format!("{seconds} s"),
+    }
+}
+
 /// Speech model selection. Stored as a plain string in settings.json.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "String", into = "String")]
@@ -277,7 +297,7 @@ impl Default for AppSettings {
             show_floating_bubble: true,
             tray_waveform_enabled: true,
             enter_stops_recording: false,
-            silence_auto_stop: true,
+            silence_auto_stop_secs: 15,
             hotkey_mods: MOD_CONTROL,
             hotkey_vk: VK_SPACE as u32,
             paste_delay_ms: 60,
@@ -288,6 +308,9 @@ impl Default for AppSettings {
             compute: ComputeChoice::Cpu,
             bubble_position: BubblePosition::BottomRight,
             microphone: String::new(),
+            // Off by default: the app goes online only when the user asks for it.
+            check_updates_automatically: false,
+            skipped_update: String::new(),
         }
     }
 }
@@ -356,8 +379,8 @@ pub(crate) fn toggle_setting(app: &Arc<AppState>, id: usize) {
             SETTINGS_TOGGLE_ENTER_STOPS => {
                 settings.enter_stops_recording = !settings.enter_stops_recording
             }
-            SETTINGS_TOGGLE_SILENCE_STOP => {
-                settings.silence_auto_stop = !settings.silence_auto_stop
+            SETTINGS_TOGGLE_AUTO_UPDATE => {
+                settings.check_updates_automatically = !settings.check_updates_automatically
             }
             _ => {}
         }
@@ -397,6 +420,32 @@ pub(crate) fn toggle_setting(app: &Arc<AppState>, id: usize) {
     });
 }
 
+/// Set the *Auto-stop on silence* duration (0 is Off). A running dictation uses it right away.
+pub(crate) fn select_silence_auto_stop(app: &Arc<AppState>, seconds: u64) {
+    let settings = {
+        let mut settings = app
+            .settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        settings.silence_auto_stop_secs = seconds;
+        settings.clone()
+    };
+    save_settings(&settings);
+    update_ui(app, |ui| {
+        ui.status = format!("Auto-stop on silence: {}.", silence_auto_stop_label(seconds));
+    });
+}
+
+/// Reads the settings of 1.0.0, which had a switch "silence_auto_stop" instead of
+/// "silence_auto_stop_secs": a switched-off auto-stop stays off.
+fn migrate_silence_auto_stop(saved: &serde_json::Value, settings: &mut AppSettings) {
+    if saved.get("silence_auto_stop_secs").is_none()
+        && saved.get("silence_auto_stop").and_then(serde_json::Value::as_bool) == Some(false)
+    {
+        settings.silence_auto_stop_secs = 0;
+    }
+}
+
 pub(crate) fn load_settings() -> AppSettings {
     let path = settings_path();
     let Ok(json) = read_text_file(&path) else {
@@ -407,14 +456,15 @@ pub(crate) fn load_settings() -> AppSettings {
     };
     match serde_json::from_str::<AppSettings>(&json) {
         Ok(mut settings) => {
+            // The file parsed as settings, so it is valid JSON.
+            let saved = serde_json::from_str::<serde_json::Value>(&json).unwrap_or_default();
             // No (valid) model choice saved yet, e.g. settings from before the
             // model picker or the old "auto" value: detect it like a first start.
-            let saved = serde_json::from_str::<serde_json::Value>(&json)
-                .ok()
-                .and_then(|value| value.get("model").and_then(|m| m.as_str()).map(str::to_string));
-            if saved.as_deref().and_then(ModelChoice::parse).is_none() {
+            let saved_model = saved.get("model").and_then(serde_json::Value::as_str);
+            if saved_model.and_then(ModelChoice::parse).is_none() {
                 settings.model = detect_model_choice(&settings.model_dir);
             }
+            migrate_silence_auto_stop(&saved, &mut settings);
             settings
         }
         Err(err) => {
@@ -585,6 +635,31 @@ mod tests {
 
         let restored: AppSettings = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(to_json(&restored), json);
+    }
+
+    #[test]
+    fn silence_auto_stop_labels() {
+        let labels: Vec<String> = SILENCE_AUTO_STOP_CHOICES.into_iter().map(silence_auto_stop_label).collect();
+        assert_eq!(labels, ["Off", "10 s", "15 s", "30 s", "1 min", "2 min", "5 min"]);
+        assert_eq!(silence_auto_stop_label(90), "90 s");
+        assert!(SILENCE_AUTO_STOP_CHOICES.contains(&AppSettings::default().silence_auto_stop_secs));
+    }
+
+    /// Settings as `load_settings` reads them from `json`, without the model detection.
+    fn load_from_json(json: &str) -> AppSettings {
+        let mut settings: AppSettings = serde_json::from_str(json).unwrap();
+        migrate_silence_auto_stop(&serde_json::from_str(json).unwrap(), &mut settings);
+        settings
+    }
+
+    #[test]
+    fn old_silence_auto_stop_switch_is_migrated() {
+        assert_eq!(load_from_json(r#"{ "silence_auto_stop": false }"#).silence_auto_stop_secs, 0);
+        assert_eq!(load_from_json(r#"{ "silence_auto_stop": true }"#).silence_auto_stop_secs, 15);
+        assert_eq!(load_from_json(r#"{ "silence_auto_stop": false, "silence_auto_stop_secs": 30 }"#).silence_auto_stop_secs, 30);
+        assert_eq!(load_from_json("{}").silence_auto_stop_secs, 15);
+        let settings = load_from_json(r#"{ "silence_auto_stop": false }"#);
+        assert!(to_json(&settings).get("silence_auto_stop").is_none());
     }
 
     #[test]

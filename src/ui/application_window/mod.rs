@@ -2,13 +2,17 @@
 //! dispatch of painting and clicks to the active tab.
 
 mod history_tab;
+mod model_notice;
 mod model_tab;
 mod settings_tab;
+mod update_panel;
 mod widgets;
 
 pub(crate) use history_tab::*;
+pub(crate) use model_notice::*;
 pub(crate) use model_tab::*;
 pub(crate) use settings_tab::*;
+pub(crate) use update_panel::*;
 pub(crate) use widgets::*;
 
 use crate::*;
@@ -43,7 +47,7 @@ pub(crate) const SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW: usize = 2008;
 pub(crate) const SETTINGS_TOGGLE_FLOATING_BUBBLE: usize = 2009;
 pub(crate) const SETTINGS_TOGGLE_TRAY_WAVEFORM: usize = 2010;
 pub(crate) const SETTINGS_TOGGLE_ENTER_STOPS: usize = 2011;
-pub(crate) const SETTINGS_TOGGLE_SILENCE_STOP: usize = 2012;
+pub(crate) const SETTINGS_TOGGLE_AUTO_UPDATE: usize = 2012;
 
 /// Show `menu` below a button of the application window and destroy it afterwards.
 /// The choice arrives as WM_COMMAND and is handled by handle_command.
@@ -61,8 +65,7 @@ pub(crate) unsafe fn show_menu_below(app: &Arc<AppState>, menu: HMENU, button: R
     };
     ClientToScreen(hwnd, &mut point);
     SetForegroundWindow(hwnd);
-    TrackPopupMenu(menu, 0, point.x, point.y, 0, hwnd, null());
-    DestroyMenu(menu);
+    track_popup_menu(menu, 0, point.x, point.y, hwnd);
 }
 
 pub(crate) struct SettingRow {
@@ -141,10 +144,10 @@ pub(crate) fn setting_rows(settings: &AppSettings) -> Vec<SettingRow> {
             enabled: settings.enter_stops_recording,
         },
         SettingRow {
-            id: SETTINGS_TOGGLE_SILENCE_STOP,
-            title: "Auto-stop on silence",
-            detail: "Stop after 15s with no speech. Off to pause freely.",
-            enabled: settings.silence_auto_stop,
+            id: SETTINGS_TOGGLE_AUTO_UPDATE,
+            title: "Check for updates automatically",
+            detail: "At start and every hour, from GitHub.",
+            enabled: settings.check_updates_automatically,
         },
     ]
 }
@@ -161,9 +164,9 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
         return;
     }
     let capturing = app.capturing_hotkey.load(Ordering::SeqCst);
-    let (status, model_status) = {
+    let (status, model_status, model_notice) = {
         let ui = lock_ui(app);
-        (ui.status.clone(), ui.model_status.clone())
+        (ui.status.clone(), ui.model_status.clone(), ui.model_notice)
     };
     if let Some(mut canvas) = Canvas::new(WINDOW_WIDTH, WINDOW_HEIGHT) {
         let tab = app.settings_tab.load(Ordering::SeqCst);
@@ -178,6 +181,7 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
             microphone_in_use: open_microphone_name(),
         };
         let downloads = downloads_snapshot(app);
+        let update = update_view(app);
         let layout = render_application_window(
             &mut canvas,
             &settings,
@@ -186,16 +190,21 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
             &view,
             &settings_view,
             &downloads,
+            model_notice,
+            &update,
             capturing,
             tab,
         );
         canvas.blit_to(hdc);
         // Remember what the list looked like, for clicks and wheel scrolling.
-        app.history_content_h.store(layout.content_h, Ordering::SeqCst);
-        if layout.scroll != view.scroll {
-            app.history_scroll.store(layout.scroll, Ordering::SeqCst);
+        let history = layout.history;
+        app.history_content_h.store(history.content_h, Ordering::SeqCst);
+        if history.scroll != view.scroll {
+            app.history_scroll.store(history.scroll, Ordering::SeqCst);
         }
-        *app.history_hits.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = layout.hits;
+        *app.history_hits.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = history.hits;
+        *app.model_notice_callout.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            layout.model_notice_callout;
     }
     EndPaint(hwnd, &ps);
 }
@@ -283,10 +292,26 @@ pub(crate) fn toggle_application_window(origin: WindowOrigin) {
             cancel_hotkey_capture(app);
             ShowWindow(hwnd, SW_HIDE);
         } else {
+            show_application_window(origin);
+        }
+    }
+}
+
+/// Open the application window next to `origin`, or bring it to the front if it is already open.
+pub(crate) fn show_application_window(origin: WindowOrigin) {
+    let Some(app) = APP.get() else {
+        return;
+    };
+    unsafe {
+        let hwnd = application_window_hwnd_from_app(app);
+        if hwnd == null_mut() {
+            return;
+        }
+        if IsWindowVisible(hwnd) == 0 {
             place_application_window(hwnd, origin);
             ShowWindow(hwnd, SW_SHOW);
-            SetForegroundWindow(hwnd);
         }
+        SetForegroundWindow(hwnd);
     }
 }
 
@@ -323,9 +348,13 @@ pub(crate) fn settings_tab_rect(tab: usize) -> RectI {
 pub(crate) fn toggle_rect(id: usize) -> RectI {
     let top = if id == SETTINGS_TOGGLE_PRELOAD {
         PRELOAD_ROW_TOP
+    } else if id == SETTINGS_TOGGLE_AUTO_UPDATE {
+        AUTO_UPDATE_ROW_TOP
     } else {
         let index = SETTINGS_TAB_TOGGLES.iter().position(|t| *t == id).unwrap_or(0);
-        SETTINGS_TAB_TOGGLES_TOP + index as i32 * 49
+        // The auto-stop row takes one place in the list of switches.
+        let row = if index >= AUTO_STOP_ROW_INDEX { index + 1 } else { index };
+        settings_row_top(row)
     };
     RectI {
         left: 32,
@@ -354,6 +383,11 @@ pub(crate) fn handle_application_window_click(x: i32, y: i32) {
 
     let tab = app.settings_tab.load(Ordering::SeqCst);
 
+    // The update panel covers the card of every tab, so it sees clicks there first.
+    if handle_update_panel_click(app, x, y) {
+        return;
+    }
+
     // Shortcut rebind button: click to begin capture, click again to cancel.
     if tab == TAB_SETTINGS && handle_shortcut_click(app, x, y) {
         return;
@@ -380,17 +414,33 @@ pub(crate) fn handle_application_window_click(x: i32, y: i32) {
         }
     }
 
+    if handle_footer_click(app, x, y) {
+        return;
+    }
+
     match tab {
         TAB_HISTORY => handle_history_tab_click(app, x, y),
-        TAB_MODEL => handle_model_tab_click(app, x, y),
+        TAB_MODEL => {
+            if !handle_model_notice_click(app, x, y) {
+                handle_model_tab_click(app, x, y);
+            }
+        }
         _ => handle_settings_tab_click(app, x, y),
     }
 }
 
+/// What a paint of the application window leaves behind for clicks and scrolling.
+pub(crate) struct WindowLayout {
+    /// The History list (copy-icon hit areas, content height), empty on the other tabs.
+    pub(crate) history: HistoryLayout,
+    /// The callout of the model notice, when it was drawn.
+    pub(crate) model_notice_callout: Option<RectI>,
+}
+
 /// Render the entire application window into a canvas: the frame (header, tab bar,
 /// card, version footer) and the content of the active `tab`. `status` is the latest
-/// status message, shown under the title. Returns the layout of the History list
-/// (copy-icon hit areas, content height), which is empty for the other tabs.
+/// status message, shown under the title. `model_notice` is drawn over the Model tab.
+#[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn render_application_window(
     canvas: &mut Canvas,
     settings: &AppSettings,
@@ -399,9 +449,11 @@ pub(crate) unsafe fn render_application_window(
     history: &HistoryView,
     settings_view: &SettingsTabView,
     downloads: &[ModelDownloadState],
+    model_notice: Option<ModelNotice>,
+    update: &UpdateView,
     capturing: bool,
     tab: usize,
-) -> HistoryLayout {
+) -> WindowLayout {
     let rows = setting_rows(settings);
     let cw = canvas.w;
     let ch = canvas.h;
@@ -415,6 +467,10 @@ pub(crate) unsafe fn render_application_window(
         measure_history_list(canvas.hdc, history)
     } else {
         HistoryList::default()
+    };
+    let notice = match model_notice {
+        Some(notice) if tab == TAB_MODEL => Some(measure_model_notice(canvas.hdc, notice)),
+        _ => None,
     };
 
     // -------- pass 1: anti-aliased shapes straight into the pixel buffer --------
@@ -437,7 +493,12 @@ pub(crate) unsafe fn render_application_window(
         match tab {
             TAB_HISTORY => draw_history_shapes(buf, cw, ch, &list),
             TAB_MODEL => draw_model_shapes(buf, cw, ch, settings, downloads),
-            _ => draw_settings_tab_shapes(buf, cw, ch, &rows, settings_view, capturing),
+            _ => draw_settings_tab_shapes(buf, cw, ch, settings, &rows, settings_view, update, capturing),
+        }
+
+        if let Some(pending) = update.pending() {
+            let pill = footer_pill_rect(&pending.version.to_string());
+            draw_footer_pill_shape(buf, cw, ch, pill, update.state.panel_open);
         }
     }
 
@@ -483,22 +544,28 @@ pub(crate) unsafe fn render_application_window(
     match tab {
         TAB_HISTORY => draw_history_text(dc, history, &mut list),
         TAB_MODEL => draw_model_text(dc, settings, model_status, &rows, downloads),
-        _ => draw_settings_tab_text(dc, settings, &rows, settings_view, capturing),
+        _ => draw_settings_tab_text(dc, settings, &rows, settings_view, update, capturing),
+    }
+    // The model notice goes on top of the finished Model tab, so its scrim dims
+    // the tab's texts too: shapes into the pixels (after GDI is done), then its texts.
+    if let Some(notice) = &notice {
+        GdiFlush();
+        draw_model_notice_shapes(canvas.pixels(), cw, ch, notice);
+        draw_model_notice_text(dc, notice);
+    }
+    // The update panel goes over everything of the card, on any tab.
+    if update.state.panel_open && update.state.available.is_some() {
+        GdiFlush();
+        draw_update_panel_shapes(canvas.pixels(), cw, ch, update);
+        draw_update_panel_text(dc, update);
     }
 
-    // version footer, bottom right below the card
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(108, 118, 132));
-    text_right(
-        dc,
-        &format!("Version {APP_VERSION}"),
-        RectI {
-            left: cw - 236,
-            top: ch - WINDOW_FOOTER_H + 10,
-            right: cw - 34,
-            bottom: ch - WINDOW_FOOTER_H + 28,
-        },
-    );
+    // version footer, bottom right below the card, with the pill of an available update
+    let pending = update.pending().map(|pending| pending.version.to_string());
+    draw_footer_text(dc, pending.as_deref());
 
-    list.layout
+    WindowLayout {
+        history: list.layout,
+        model_notice_callout: notice.map(|notice| notice.callout),
+    }
 }
