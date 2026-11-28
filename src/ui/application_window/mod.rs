@@ -5,12 +5,14 @@ mod history_tab;
 mod model_notice;
 mod model_tab;
 mod settings_tab;
+mod update_panel;
 mod widgets;
 
 pub(crate) use history_tab::*;
 pub(crate) use model_notice::*;
 pub(crate) use model_tab::*;
 pub(crate) use settings_tab::*;
+pub(crate) use update_panel::*;
 pub(crate) use widgets::*;
 
 use crate::*;
@@ -45,6 +47,7 @@ pub(crate) const SETTINGS_TOGGLE_BUBBLE_CLICK_WINDOW: usize = 2008;
 pub(crate) const SETTINGS_TOGGLE_FLOATING_BUBBLE: usize = 2009;
 pub(crate) const SETTINGS_TOGGLE_TRAY_WAVEFORM: usize = 2010;
 pub(crate) const SETTINGS_TOGGLE_ENTER_STOPS: usize = 2011;
+pub(crate) const SETTINGS_TOGGLE_AUTO_UPDATE: usize = 2012;
 
 /// Show `menu` below a button of the application window and destroy it afterwards.
 /// The choice arrives as WM_COMMAND and is handled by handle_command.
@@ -140,6 +143,12 @@ pub(crate) fn setting_rows(settings: &AppSettings) -> Vec<SettingRow> {
             detail: "Press Enter to finish and submit the text.",
             enabled: settings.enter_stops_recording,
         },
+        SettingRow {
+            id: SETTINGS_TOGGLE_AUTO_UPDATE,
+            title: "Check for updates automatically",
+            detail: "At start and every hour, from GitHub.",
+            enabled: settings.check_updates_automatically,
+        },
     ]
 }
 
@@ -172,6 +181,7 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
             microphone_in_use: open_microphone_name(),
         };
         let downloads = downloads_snapshot(app);
+        let update = update_view(app);
         let layout = render_application_window(
             &mut canvas,
             &settings,
@@ -181,6 +191,7 @@ pub(crate) unsafe fn paint_application_window(hwnd: HWND) {
             &settings_view,
             &downloads,
             model_notice,
+            &update,
             capturing,
             tab,
         );
@@ -337,6 +348,8 @@ pub(crate) fn settings_tab_rect(tab: usize) -> RectI {
 pub(crate) fn toggle_rect(id: usize) -> RectI {
     let top = if id == SETTINGS_TOGGLE_PRELOAD {
         PRELOAD_ROW_TOP
+    } else if id == SETTINGS_TOGGLE_AUTO_UPDATE {
+        AUTO_UPDATE_ROW_TOP
     } else {
         let index = SETTINGS_TAB_TOGGLES.iter().position(|t| *t == id).unwrap_or(0);
         // The auto-stop row takes one place in the list of switches.
@@ -370,6 +383,11 @@ pub(crate) fn handle_application_window_click(x: i32, y: i32) {
 
     let tab = app.settings_tab.load(Ordering::SeqCst);
 
+    // The update panel covers the card of every tab, so it sees clicks there first.
+    if handle_update_panel_click(app, x, y) {
+        return;
+    }
+
     // Shortcut rebind button: click to begin capture, click again to cancel.
     if tab == TAB_SETTINGS && handle_shortcut_click(app, x, y) {
         return;
@@ -394,6 +412,10 @@ pub(crate) fn handle_application_window_click(x: i32, y: i32) {
             set_settings_tab(app, index);
             return;
         }
+    }
+
+    if handle_footer_click(app, x, y) {
+        return;
     }
 
     match tab {
@@ -428,6 +450,7 @@ pub(crate) unsafe fn render_application_window(
     settings_view: &SettingsTabView,
     downloads: &[ModelDownloadState],
     model_notice: Option<ModelNotice>,
+    update: &UpdateView,
     capturing: bool,
     tab: usize,
 ) -> WindowLayout {
@@ -470,7 +493,12 @@ pub(crate) unsafe fn render_application_window(
         match tab {
             TAB_HISTORY => draw_history_shapes(buf, cw, ch, &list),
             TAB_MODEL => draw_model_shapes(buf, cw, ch, settings, downloads),
-            _ => draw_settings_tab_shapes(buf, cw, ch, settings, &rows, settings_view, capturing),
+            _ => draw_settings_tab_shapes(buf, cw, ch, settings, &rows, settings_view, update, capturing),
+        }
+
+        if let Some(pending) = update.pending() {
+            let pill = footer_pill_rect(&pending.version.to_string());
+            draw_footer_pill_shape(buf, cw, ch, pill, update.state.panel_open);
         }
     }
 
@@ -516,7 +544,7 @@ pub(crate) unsafe fn render_application_window(
     match tab {
         TAB_HISTORY => draw_history_text(dc, history, &mut list),
         TAB_MODEL => draw_model_text(dc, settings, model_status, &rows, downloads),
-        _ => draw_settings_tab_text(dc, settings, &rows, settings_view, capturing),
+        _ => draw_settings_tab_text(dc, settings, &rows, settings_view, update, capturing),
     }
     // The model notice goes on top of the finished Model tab, so its scrim dims
     // the tab's texts too: shapes into the pixels (after GDI is done), then its texts.
@@ -525,20 +553,16 @@ pub(crate) unsafe fn render_application_window(
         draw_model_notice_shapes(canvas.pixels(), cw, ch, notice);
         draw_model_notice_text(dc, notice);
     }
+    // The update panel goes over everything of the card, on any tab.
+    if update.state.panel_open && update.state.available.is_some() {
+        GdiFlush();
+        draw_update_panel_shapes(canvas.pixels(), cw, ch, update);
+        draw_update_panel_text(dc, update);
+    }
 
-    // version footer, bottom right below the card
-    SelectObject(dc, small_font() as _);
-    SetTextColor(dc, rgb(108, 118, 132));
-    text_right(
-        dc,
-        &format!("Version {APP_VERSION}"),
-        RectI {
-            left: cw - 236,
-            top: ch - WINDOW_FOOTER_H + 10,
-            right: cw - 34,
-            bottom: ch - WINDOW_FOOTER_H + 28,
-        },
-    );
+    // version footer, bottom right below the card, with the pill of an available update
+    let pending = update.pending().map(|pending| pending.version.to_string());
+    draw_footer_text(dc, pending.as_deref());
 
     WindowLayout {
         history: list.layout,

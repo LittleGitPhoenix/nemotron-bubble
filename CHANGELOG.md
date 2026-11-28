@@ -7,8 +7,15 @@ ___
 
 ## 1.1.0
 
-📅 _2026-??-??_
+📅 _2026-11-28_
 ✏️ _LittlePhoenix_
+
+### Added
+
+- App updates from GitHub. **Check now** on the *Settings* tab looks for a new version, and the new setting *Check for updates automatically* (off by default, `check_updates_automatically` in `settings.json`) looks 15 s after the start and then every hour. Only stable versions are offered.
+- An available version is announced by an always visible arrow badge on the top-left edge of the floating bubble, a pill with the new version in the footer of the application window, a dot on the tray icon, a second line in the tray tooltip and the entry *Update to x.y.z...* in the tray menu. Each of them opens the update panel.
+- The update panel over the application window offers *Update now*, *Skip this version*, *Later* and a link to the release notes on GitHub. *Update now* downloads the release archive into `update\` next to the exe, resumes an interrupted download, checks it against the SHA-256 published with the release, replaces the exe and its files and restarts the app. Settings, history and models are kept. *Skip this version* hides the announcements until a newer version appears (`skipped_update` in `settings.json`).
+- The release workflow keeps `updater.json` in the GitHub release `nemotron-bubble-Updater` up to date for every stable version. Versions with a pre-release suffix become GitHub pre-releases.
 
 ### Changed
 
@@ -23,6 +30,12 @@ ___
 
 - *Auto-stop on silence* ended a dictation after 15 s although the user was speaking and the speech was transcribed, if the microphone level was low. Every recognized word now counts as speech as well.
 - The waveform of the floating bubble stayed flat at a low microphone level. It now adapts to the background noise and the speech level of the microphone, so it looks the same at any input volume.
+
+### References
+
+⚪ flate2 **1.1.9**  
+⚪ semver **1.0.28**  
+⚪ tar **0.4.46**  
 
 ___
 

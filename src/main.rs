@@ -16,6 +16,7 @@ mod output;
 mod settings;
 mod sound;
 mod ui;
+mod update;
 mod util;
 
 #[cfg(feature = "assets")]
@@ -31,6 +32,7 @@ use output::*;
 use settings::*;
 use sound::*;
 use ui::*;
+use update::*;
 use util::*;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -162,6 +164,9 @@ pub(crate) struct AppState {
     /// cancel request for the running download (only one runs at a time).
     pub(crate) downloads: Mutex<Vec<ModelDownloadState>>,
     pub(crate) download_cancel: AtomicBool,
+    /// App updates from GitHub (src/update.rs), and the cancel request for a running update download.
+    pub(crate) update: Mutex<UpdateState>,
+    pub(crate) update_cancel: AtomicBool,
     pub(crate) enter_pending: AtomicBool,
     pub(crate) drag: Mutex<Option<DragState>>,
     pub(crate) settings: Mutex<AppSettings>,
@@ -238,6 +243,7 @@ pub(crate) fn run_app() -> Result<()> {
     let settings = load_settings();
     save_settings(&settings);
     apply_startup_setting(settings.start_with_windows);
+    remove_update_leftovers();
     ensure_sound_assets();
     let history = load_history(settings.history_limit);
     let initial_status = ready_status(&settings);
@@ -259,6 +265,8 @@ pub(crate) fn run_app() -> Result<()> {
         settings_scroll: AtomicI32::new(0),
         downloads: Mutex::new(vec![ModelDownloadState::default(); DOWNLOADABLE_MODELS.len()]),
         download_cancel: AtomicBool::new(false),
+        update: Mutex::new(UpdateState::default()),
+        update_cancel: AtomicBool::new(false),
         enter_pending: AtomicBool::new(false),
         drag: Mutex::new(None),
         settings: Mutex::new(settings),
@@ -301,6 +309,9 @@ pub(crate) fn run_app() -> Result<()> {
     }
 
     close_audio_capture();
+    // Only now, with the shortcut, the tray icon and the microphone released, the
+    // exe of an installed update can take over.
+    restart_after_update();
     Ok(())
 }
 

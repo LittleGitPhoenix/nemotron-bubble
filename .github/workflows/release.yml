@@ -2,6 +2,8 @@
 # Everything happens in one job, independent of validate.yml, so a merged pull request triggers only this workflow.
 # The release is skipped if the GitHub release for the current version already exists, so pushes without a version change do not fail.
 # Release tag: nemotron-bubble.<Version>, asset: nemotron-bubble.<Version>.win-x64.tgz with the executable, its dependencies, CHANGELOG.md, README.md and LICENSE.
+# A version with a pre-release suffix (e.g. 1.2.0-beta.1) becomes a GitHub pre-release.
+# Every other version also updates updater.json in the release nemotron-bubble-Updater, which the app's update check reads.
 name: Release
 
 on:
@@ -64,10 +66,12 @@ jobs:
           "| ✅ | Version | ``$version`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
           "version=$version" >> $Env:GITHUB_OUTPUT
           "tag=nemotron-bubble.$version" >> $Env:GITHUB_OUTPUT
+          "prerelease=$($version.Contains('-').ToString().ToLowerInvariant())" >> $Env:GITHUB_OUTPUT
           "archive-name=nemotron-bubble.$version.win-x64.tgz" >> $Env:GITHUB_OUTPUT
 
       # Same rules as validate.yml: an entry for the current version must exist, and its date must not be a placeholder.
       - name: <Test> Check changelog version
+        id: changelog
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -89,6 +93,7 @@ jobs:
               }
               Write-Host "✅ Changelog $Env:VERSION ($date)"
               "| ✅ | Changelog | ``$date`` |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
+              "date=$date" >> $Env:GITHUB_OUTPUT
           } else {
               Write-Host "⚠️ Version $Env:VERSION has no date line (warning only)."
               "| ⚠️ | Changelog | No date line found |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
@@ -133,7 +138,9 @@ jobs:
           "| ✅ | Build | Passed |" | Add-Content "$Env:RUNNER_TEMP/ci-summary.md"
 
       # DirectML.dll is placed next to the exe by the ort-sys build script and is needed for GPU processing.
+      # The size and SHA-256 of the archive go into updater.json, so the app can verify its download.
       - name: <Release> Create archive
+        id: archive
         if: steps.existing.outputs.exists == 'false'
         shell: pwsh
         env:
@@ -154,6 +161,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Write-Host "✅ Archive: $archive"
           & tar -tzvf $archive
+          "sha256=$((Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant())" >> $Env:GITHUB_OUTPUT
+          "size=$((Get-Item -Path $archive).Length)" >> $Env:GITHUB_OUTPUT
 
       # Extracts the entry of the current version from CHANGELOG.md, up to the next version heading or '___' rule.
       - name: <Release> Extract release notes
@@ -176,12 +185,74 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
           ARCHIVE_NAME: ${{ steps.version.outputs.archive-name }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
-          & gh release create $Env:TAG "$Env:RUNNER_TEMP/$Env:ARCHIVE_NAME" `
-              --title $Env:TAG `
-              --notes-file "$Env:RUNNER_TEMP/release-notes.md" `
-              --target $Env:GITHUB_SHA
+          $arguments = @(
+              'release', 'create', $Env:TAG, "$Env:RUNNER_TEMP/$Env:ARCHIVE_NAME",
+              '--title', $Env:TAG,
+              '--notes-file', "$Env:RUNNER_TEMP/release-notes.md",
+              '--target', $Env:GITHUB_SHA
+          )
+          if ($Env:PRERELEASE -eq 'true') { $arguments += '--prerelease' }
+          & gh @arguments
           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # Stable versions only: the update check of the app reads updater.json from the release
+      # nemotron-bubble-Updater (Mandos updater layout). The release is created on first use and marked as
+      # pre-release, so it never becomes the "Latest" release. Only the entry of this app is replaced.
+      - name: <Release> Update updater.json
+        if: steps.existing.outputs.exists == 'false' && steps.version.outputs.prerelease == 'false'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ARCHIVE_NAME: ${{ steps.version.outputs.archive-name }}
+          RELEASE_DATE: ${{ steps.changelog.outputs.date }}
+          SHA256: ${{ steps.archive.outputs.sha256 }}
+          SIZE: ${{ steps.archive.outputs.size }}
+        run: |
+          $updaterTag = 'nemotron-bubble-Updater'
+          $directory = "$Env:RUNNER_TEMP/updater"
+          New-Item -ItemType Directory -Path $directory -Force | Out-Null
+          $jsonPath = "$directory/updater.json"
+
+          & gh release view $updaterTag *> $null
+          $updaterExists = $LASTEXITCODE -eq 0
+          $global:LASTEXITCODE = 0
+          if ($updaterExists) {
+              & gh release download $updaterTag --pattern 'updater.json' --dir $directory --clobber
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+              $data = Get-Content -Path $jsonPath -Raw | ConvertFrom-Json -AsHashtable
+          } else {
+              $data = [ordered]@{}
+          }
+          if (-not $data['projects']) { $data['projects'] = [ordered]@{} }
+
+          $date = if ($Env:RELEASE_DATE) { $Env:RELEASE_DATE } else { (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd') }
+          $data['projects']['nemotron-bubble'] = [ordered]@{
+              version   = $Env:VERSION
+              release   = $Env:TAG
+              date      = $date
+              changelog = (Get-Content -Path "$Env:RUNNER_TEMP/release-notes.md" -Raw).Trim()
+              assets    = [ordered]@{ 'win-x64' = "$Env:GITHUB_SERVER_URL/$Env:GITHUB_REPOSITORY/releases/download/$Env:TAG/$Env:ARCHIVE_NAME" }
+              sha256    = [ordered]@{ 'win-x64' = $Env:SHA256 }
+              size      = [ordered]@{ 'win-x64' = [long]$Env:SIZE }
+          }
+          $data['generated'] = (Get-Date).ToUniversalTime().ToString('o')
+          $data | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding utf8NoBOM
+          Get-Content -Path $jsonPath
+
+          if ($updaterExists) {
+              & gh release upload $updaterTag $jsonPath --clobber
+          } else {
+              & gh release create $updaterTag $jsonPath `
+                  --title $updaterTag `
+                  --notes 'Index release read by the update check of Nemotron Bubble. The release workflow updates it, do not edit or delete it.' `
+                  --prerelease `
+                  --target $Env:GITHUB_SHA
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "✅ ``updater.json`` in ``$updaterTag`` now offers ``$Env:VERSION``." | Set-Content -Path "$Env:RUNNER_TEMP/updater-summary.md"
 
       - name: <Summary> Write step summary
         if: always()
@@ -197,4 +268,10 @@ jobs:
               "`n### Release`n`n↷ ``$Env:TAG`` already exists, nothing was released." | Add-Content $Env:GITHUB_STEP_SUMMARY
           } elseif ('${{ job.status }}' -eq 'success') {
               "`n### Release`n`n✅ [$Env:TAG]($Env:GITHUB_SERVER_URL/$Env:GITHUB_REPOSITORY/releases/tag/$Env:TAG)" | Add-Content $Env:GITHUB_STEP_SUMMARY
+              if (Test-Path "$Env:RUNNER_TEMP/updater-summary.md") {
+                  "" | Add-Content $Env:GITHUB_STEP_SUMMARY
+                  Get-Content "$Env:RUNNER_TEMP/updater-summary.md" | Add-Content $Env:GITHUB_STEP_SUMMARY
+              } elseif ('${{ steps.version.outputs.prerelease }}' -eq 'true') {
+                  "`n↷ Pre-release: ``updater.json`` was left unchanged." | Add-Content $Env:GITHUB_STEP_SUMMARY
+              }
           }

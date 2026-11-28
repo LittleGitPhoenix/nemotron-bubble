@@ -4,7 +4,7 @@
 //! Only the thin outer frame and the shadow are still drawn by Windows.
 
 use crate::*;
-use windows_sys::Win32::Graphics::Gdi::{CreateSolidBrush, ExcludeClipRect, GetTextExtentPoint32W, HBRUSH};
+use windows_sys::Win32::Graphics::Gdi::{CreateSolidBrush, ExcludeClipRect, HBRUSH};
 use windows_sys::Win32::UI::Controls::{
     DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_CHECKED, ODS_DISABLED, ODS_GRAYED, ODS_SELECTED, ODT_MENU,
 };
@@ -31,7 +31,9 @@ static MENU_BACKGROUND_BRUSH: OnceCell<isize> = OnceCell::new();
 /// What an owner-drawn entry shows. Windows hands its address back in WM_MEASUREITEM
 /// and WM_DRAWITEM as the item data.
 enum MenuEntry {
-    Item { text: String, opens_submenu: bool },
+    /// With `accent`, the text is drawn in the accent color and the given icon-font
+    /// glyph sits in the check mark column.
+    Item { text: String, opens_submenu: bool, accent: Option<&'static str> },
     Separator,
 }
 
@@ -56,8 +58,20 @@ pub(crate) unsafe fn append_menu_item(menu: HMENU, flags: MENU_ITEM_FLAGS, id: u
     let entry = register_entry(MenuEntry::Item {
         text: text.to_string(),
         opens_submenu: flags & MF_POPUP != 0,
+        accent: None,
     });
     AppendMenuW(menu, flags | MF_OWNERDRAW, id, entry as *const u16);
+}
+
+/// Append an owner-drawn entry that stands out: accent-colored text with the
+/// icon-font `glyph` in front of it, e.g. the tray menu's update entry.
+pub(crate) unsafe fn append_accent_menu_item(menu: HMENU, id: usize, text: &str, glyph: &'static str) {
+    let entry = register_entry(MenuEntry::Item {
+        text: text.to_string(),
+        opens_submenu: false,
+        accent: Some(glyph),
+    });
+    AppendMenuW(menu, MF_STRING | MF_OWNERDRAW, id, entry as *const u16);
 }
 
 /// Append an owner-drawn separator line.
@@ -86,14 +100,7 @@ pub(crate) unsafe fn track_popup_menu(menu: HMENU, flags: TRACK_POPUP_MENU_FLAGS
 
 /// Width of `text` in the menu font.
 unsafe fn text_width(text: &str) -> i32 {
-    let screen = GetDC(null_mut());
-    let old_font = SelectObject(screen, ui_font() as _);
-    let wide: Vec<u16> = text.encode_utf16().collect();
-    let mut size = SIZE { cx: 0, cy: 0 };
-    GetTextExtentPoint32W(screen, wide.as_ptr(), wide.len() as i32, &mut size);
-    SelectObject(screen, old_font);
-    ReleaseDC(null_mut(), screen);
-    size.cx
+    text_width_in(ui_font(), text)
 }
 
 /// WM_MEASUREITEM: the size of an owner-drawn menu entry. Returns false for messages
@@ -104,7 +111,7 @@ pub(crate) unsafe fn measure_menu_item(lparam: LPARAM) -> bool {
         return false;
     }
     match &*(measure.itemData as *const MenuEntry) {
-        MenuEntry::Item { text, opens_submenu } => {
+        MenuEntry::Item { text, opens_submenu, .. } => {
             let arrow = if *opens_submenu { MENU_SUBMENU_ARROW_WIDTH } else { 0 };
             // Windows adds the width of a check mark itself, so leave that out.
             let check = GetSystemMetrics(SM_CXMENUCHECK) - 1;
@@ -155,7 +162,7 @@ pub(crate) unsafe fn draw_menu_item(lparam: LPARAM) -> bool {
             MenuEntry::Item { .. } => {}
         }
     }
-    if let MenuEntry::Item { text, opens_submenu } = entry {
+    if let MenuEntry::Item { text, opens_submenu, accent } = entry {
         let dc = canvas.hdc;
         SetBkMode(dc, TRANSPARENT as i32);
         let full = RectI {
@@ -169,8 +176,18 @@ pub(crate) unsafe fn draw_menu_item(lparam: LPARAM) -> bool {
             SetTextColor(dc, rgb(110, 162, 255));
             text_center(dc, GLYPH_CHECK_MARK, RectI { right: MENU_TEXT_LEFT, ..full });
         }
+        if let Some(glyph) = accent {
+            SelectObject(dc, icon_font() as _);
+            SetTextColor(dc, rgb(110, 162, 255));
+            text_center(dc, glyph, RectI { right: MENU_TEXT_LEFT, ..full });
+        }
         SelectObject(dc, ui_font() as _);
-        SetTextColor(dc, if disabled { rgb(124, 134, 148) } else { rgb(233, 238, 244) });
+        let color = match (disabled, accent) {
+            (true, _) => rgb(124, 134, 148),
+            (false, Some(_)) => rgb(110, 162, 255),
+            (false, None) => rgb(233, 238, 244),
+        };
+        SetTextColor(dc, color);
         let text_right = width - MENU_TEXT_RIGHT_PADDING + 8 - if *opens_submenu { MENU_SUBMENU_ARROW_WIDTH } else { 0 };
         text_left_ellipsis(dc, text, RectI { left: MENU_TEXT_LEFT, right: text_right, ..full });
         if *opens_submenu {

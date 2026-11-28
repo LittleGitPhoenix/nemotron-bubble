@@ -58,7 +58,7 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
     add_tray_icon(hwnd);
     create_bubble_tooltip(hwnd);
     // A microphone missing at startup was recorded before this window existed.
-    sync_mic_indicator(hwnd);
+    sync_indicators(hwnd);
 
     let application_window_title = wide_null("Nemotron Bubble");
     let application_window_hwnd = CreateWindowExW(
@@ -109,6 +109,8 @@ pub(crate) unsafe fn run_window(app: Arc<AppState>) -> Result<()> {
 
     // Drive waveform + tray animation from a single UI-thread timer.
     SetTimer(hwnd, ANIM_TIMER_ID, ANIM_INTERVAL_MS, None);
+    // Asks regularly whether an automatic update check is due (setting off: nothing happens).
+    SetTimer(hwnd, UPDATE_TIMER_ID, UPDATE_TIMER_MS, None);
 
     let mut msg: MSG = std::mem::zeroed();
     while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
@@ -219,6 +221,10 @@ pub(crate) unsafe extern "system" fn wnd_proc(
                 if let Some(app) = APP.get() {
                     retry_audio_capture(app);
                 }
+            } else if wparam == UPDATE_TIMER_ID {
+                if let Some(app) = APP.get() {
+                    update_timer_tick(app);
+                }
             } else if wparam == COPY_FLASH_TIMER_ID {
                 // the "copied" checkmark has been shown long enough
                 KillTimer(hwnd, COPY_FLASH_TIMER_ID);
@@ -256,7 +262,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
                 InvalidateRect(hwnd, null(), 0);
             } else {
                 render_bubble(hwnd);
-                sync_mic_indicator(hwnd);
+                sync_indicators(hwnd);
             }
             0
         }
@@ -266,6 +272,7 @@ pub(crate) unsafe extern "system" fn wnd_proc(
                     let _ = app.engine_tx.send(EngineCommand::Shutdown);
                     KillTimer(hwnd, ANIM_TIMER_ID);
                     KillTimer(hwnd, MIC_RETRY_TIMER_ID);
+                    KillTimer(hwnd, UPDATE_TIMER_ID);
                     UnregisterHotKey(hwnd, HOTKEY_ID);
                     remove_tray_icon(hwnd);
                     PostQuitMessage(0);
@@ -281,6 +288,11 @@ pub(crate) fn handle_command(command: usize) {
     match command {
         IDM_START_STOP => toggle_recording(),
         IDM_SHOW_HIDE => toggle_window_visibility(),
+        IDM_UPDATE => {
+            if let Some(app) = APP.get() {
+                open_update_panel(app, WindowOrigin::Tray);
+            }
+        }
         id if (IDM_MODEL_BASE..IDM_MODEL_BASE + ModelChoice::ALL.len()).contains(&id) => {
             if let Some(app) = APP.get() {
                 select_model(app, ModelChoice::ALL[id - IDM_MODEL_BASE]);

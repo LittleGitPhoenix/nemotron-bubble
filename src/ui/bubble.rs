@@ -73,6 +73,10 @@ pub(crate) fn handle_click(x: i32, y: i32) {
         handle_command(IDM_QUIT);
         return;
     }
+    if UPDATE_BADGE_SHOWN.load(Ordering::SeqCst) && bubble_update_hit(x, y) {
+        open_update_panel(app, WindowOrigin::Bubble);
+        return;
+    }
     if settings_snapshot(app).bubble_click_opens_window {
         toggle_application_window(WindowOrigin::Bubble);
     } else {
@@ -221,6 +225,8 @@ pub(crate) unsafe fn render_bubble(hwnd: HWND) {
             ui.mic_error.is_some(),
         )
     };
+    let update_pending = pending_update_version(app).is_some();
+    UPDATE_BADGE_SHOWN.store(update_pending, Ordering::SeqCst);
 
     let Some(mut canvas) = Canvas::new(WIDTH, HEIGHT) else {
         return;
@@ -239,11 +245,47 @@ pub(crate) unsafe fn render_bubble(hwnd: HWND) {
             wave_enabled,
             mic_missing && !recording,
         );
+        if update_pending {
+            draw_update_badge(buf, WIDTH, HEIGHT, UPDATE_HOVER.load(Ordering::SeqCst));
+        }
         if BUBBLE_HOVER.load(Ordering::SeqCst) {
             draw_close_badge(buf, WIDTH, HEIGHT, CLOSE_HOVER.load(Ordering::SeqCst));
         }
     }
     canvas.present_layered(hwnd);
+}
+
+// --- Update badge ---------------------------------------------------------------
+
+/// Centre of the update badge: the close badge mirrored to the pill's top-left
+/// edge, with the same radius. Unlike the close badge it is always shown while an
+/// update is available.
+const UPDATE_CX: f32 = (BUBBLE_MARGIN + 12) as f32;
+const UPDATE_CY: f32 = CLOSE_CY;
+/// The badge was drawn by the last render, and the mouse is over it.
+static UPDATE_BADGE_SHOWN: AtomicBool = AtomicBool::new(false);
+static UPDATE_HOVER: AtomicBool = AtomicBool::new(false);
+
+/// True when (x, y) in bubble window coordinates hits the update badge.
+pub(crate) fn bubble_update_hit(x: i32, y: i32) -> bool {
+    (x as f32 + 0.5 - UPDATE_CX).hypot(y as f32 + 0.5 - UPDATE_CY) <= CLOSE_R + 2.0
+}
+
+/// Round accent badge with an up arrow, lighter while the mouse is over it.
+fn draw_update_badge(buf: &mut [u32], cw: i32, ch: i32, hot: bool) {
+    let (cx, cy, r) = (UPDATE_CX, UPDATE_CY, CLOSE_R);
+    let bounds = (cx - r - 2.0, cy - r - 2.0, cx + r + 2.0, cy + r + 2.0);
+    fill_sdf(buf, cw, ch, bounds, (18, 20, 25), 0.9, |x, y| (x - cx).hypot(y - cy) - (r + 1.2));
+    let fill: Rgb = if hot { (127, 176, 255) } else { (92, 146, 248) };
+    fill_sdf(buf, cw, ch, bounds, fill, 1.0, |x, y| (x - cx).hypot(y - cy) - r);
+    // Arrow: a shaft and two wings meeting at the tip.
+    let (tip, base, wing) = (cy - 4.0, cy + 4.0, 3.2);
+    fill_sdf(buf, cw, ch, bounds, (255, 255, 255), 1.0, |x, y| {
+        let shaft = sd_segment(x, y, cx, tip, cx, base);
+        let left = sd_segment(x, y, cx - wing, tip + wing, cx, tip);
+        let right = sd_segment(x, y, cx + wing, tip + wing, cx, tip);
+        shaft.min(left).min(right) - 0.85
+    });
 }
 
 // --- Close badge --------------------------------------------------------------
@@ -300,12 +342,20 @@ pub(crate) unsafe fn bubble_mouse_move(hwnd: HWND, x: i32, y: i32) {
     if CLOSE_HOVER.swap(hot, Ordering::SeqCst) != hot {
         render_bubble(hwnd);
     }
+    let update_hot = UPDATE_BADGE_SHOWN.load(Ordering::SeqCst) && bubble_update_hit(x, y);
+    if UPDATE_HOVER.swap(update_hot, Ordering::SeqCst) != update_hot {
+        render_bubble(hwnd);
+        refresh_bubble_tooltip(hwnd);
+    }
 }
 
 /// WM_MOUSELEAVE on the bubble: hide the close badge.
 pub(crate) unsafe fn bubble_mouse_leave(hwnd: HWND) {
     BUBBLE_HOVER.store(false, Ordering::SeqCst);
     CLOSE_HOVER.store(false, Ordering::SeqCst);
+    if UPDATE_HOVER.swap(false, Ordering::SeqCst) {
+        refresh_bubble_tooltip(hwnd);
+    }
     render_bubble(hwnd);
 }
 
@@ -429,8 +479,9 @@ pub(crate) const MIC_RETRY_INTERVAL_MS: u32 = 3000;
 pub(crate) static BUBBLE_TOOLTIP: AtomicIsize = AtomicIsize::new(0);
 
 thread_local! {
-    // The mic_error the tray icon, the tooltips and the retry timer last showed.
-    static SHOWN_MIC_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    // The mic_error and the available update version the tray icon, the tooltips
+    // and the retry timer last showed.
+    static SHOWN_INDICATORS: RefCell<(Option<String>, Option<String>)> = const { RefCell::new((None, None)) };
 }
 
 /// Create the bubble's tooltip. It stays inactive while a microphone is available.
@@ -480,8 +531,9 @@ unsafe fn bubble_tool_info(bubble: HWND, text: *mut u16) -> TTTOOLINFOW {
 }
 
 /// Bring the tray icon, both tooltips and the retry timer in line with
-/// `UiState::mic_error`. Runs on the UI thread after every UI update.
-pub(crate) unsafe fn sync_mic_indicator(hwnd: HWND) {
+/// `UiState::mic_error` and the available update. Runs on the UI thread after
+/// every UI update.
+pub(crate) unsafe fn sync_indicators(hwnd: HWND) {
     let Some(app) = APP.get() else {
         return;
     };
@@ -489,12 +541,14 @@ pub(crate) unsafe fn sync_mic_indicator(hwnd: HWND) {
         let ui = lock_ui(app);
         (ui.mic_error.clone(), ui.recording)
     };
-    let changed = SHOWN_MIC_ERROR.with(|shown| {
+    let update = pending_update_version(app);
+    let shown_now = (error.clone(), update.clone());
+    let changed = SHOWN_INDICATORS.with(|shown| {
         let mut shown = shown.borrow_mut();
-        if *shown == error {
+        if *shown == shown_now {
             false
         } else {
-            *shown = error.clone();
+            *shown = shown_now;
             true
         }
     });
@@ -502,31 +556,44 @@ pub(crate) unsafe fn sync_mic_indicator(hwnd: HWND) {
         return;
     }
 
-    update_tray_tooltip(hwnd, error.as_deref());
+    update_tray_tooltip(hwnd, error.as_deref(), update.as_deref());
     if !recording {
-        update_tray_icon(hwnd, make_tray_icon(0.0, false, error.is_some()));
+        update_tray_icon(hwnd, make_tray_icon(0.0, false, error.is_some(), update.is_some()));
     }
-
-    let tooltip = BUBBLE_TOOLTIP.load(Ordering::SeqCst) as HWND;
-    if tooltip != null_mut() {
-        let mut text = wide_null(&match &error {
-            Some(reason) => format!(
-                "No microphone available\r\nReason: {reason}\r\n\r\n\
-                 Connect or enable a microphone (Windows Settings > System > Sound > Input). \
-                 It is picked up automatically."
-            ),
-            None => String::new(),
-        });
-        let info = bubble_tool_info(hwnd, text.as_mut_ptr());
-        SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, &info as *const _ as LPARAM);
-        SendMessageW(tooltip, TTM_ACTIVATE, usize::from(error.is_some()), 0);
-    }
+    refresh_bubble_tooltip(hwnd);
 
     if error.is_some() {
         SetTimer(hwnd, MIC_RETRY_TIMER_ID, MIC_RETRY_INTERVAL_MS, None);
     } else {
         KillTimer(hwnd, MIC_RETRY_TIMER_ID);
     }
+}
+
+/// The bubble's tooltip has a single tool, the whole window. It names the
+/// available update while the mouse is over the update badge, else the reason
+/// for a missing microphone, and stays off otherwise.
+unsafe fn refresh_bubble_tooltip(hwnd: HWND) {
+    let tooltip = BUBBLE_TOOLTIP.load(Ordering::SeqCst) as HWND;
+    let Some(app) = APP.get() else {
+        return;
+    };
+    if tooltip == null_mut() {
+        return;
+    }
+    let update = pending_update_version(app).filter(|_| UPDATE_HOVER.load(Ordering::SeqCst));
+    let text = match (update, lock_ui(app).mic_error.clone()) {
+        (Some(version), _) => format!("Update to {version} available. Click for details."),
+        (None, Some(reason)) => format!(
+            "No microphone available\r\nReason: {reason}\r\n\r\n\
+             Connect or enable a microphone (Windows Settings > System > Sound > Input). \
+             It is picked up automatically."
+        ),
+        (None, None) => String::new(),
+    };
+    let mut wide = wide_null(&text);
+    let info = bubble_tool_info(hwnd, wide.as_mut_ptr());
+    SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, &info as *const _ as LPARAM);
+    SendMessageW(tooltip, TTM_ACTIVATE, usize::from(!text.is_empty()), 0);
 }
 
 /// Mirrored, rounded, anti-aliased waveform bars centred in the pill.
@@ -611,7 +678,7 @@ pub(crate) unsafe fn on_anim_tick(hwnd: HWND) {
     if recording && settings.tray_waveform_enabled {
         if tick % 3 == 0 {
             let level = lock_ui(app).current_level;
-            update_tray_icon(hwnd, make_tray_icon(level, true, false));
+            update_tray_icon(hwnd, make_tray_icon(level, true, false, pending_update_version(app).is_some()));
         }
         TRAY_ANIMATING.store(true, Ordering::Relaxed);
     } else if TRAY_ANIMATING.swap(false, Ordering::Relaxed) {
@@ -732,5 +799,36 @@ mod tests {
             (icon_centre_y - pill_centre_y).abs() <= 1.0,
             "Icon centre y {icon_centre_y} is not the pill centre y {pill_centre_y}."
         );
+    }
+
+    #[test]
+    fn update_badge_fits_the_window_and_keeps_clear_of_the_close_badge() {
+        // Both badges, with their dark ring, lie inside the window.
+        let reach = CLOSE_R + 2.0;
+        assert!(UPDATE_CX - reach >= 0.0 && UPDATE_CY - reach >= 0.0);
+        assert!(CLOSE_CX + reach <= WIDTH as f32 && CLOSE_CY + reach <= HEIGHT as f32);
+
+        // Their hit areas are far apart, so a click never reaches the wrong one.
+        let (update_x, update_y) = (UPDATE_CX as i32, UPDATE_CY as i32);
+        let (close_x, close_y) = (CLOSE_CX as i32, CLOSE_CY as i32);
+        assert!((CLOSE_CX - UPDATE_CX).hypot(CLOSE_CY - UPDATE_CY) > 2.0 * reach + 20.0);
+        assert!(bubble_update_hit(update_x, update_y) && !bubble_close_hit(update_x, update_y));
+        assert!(bubble_close_hit(close_x, close_y) && !bubble_update_hit(close_x, close_y));
+
+        // The badge paints only around its own centre: the accent circle with the arrow.
+        let mut buffer = vec![0u32; (WIDTH * HEIGHT) as usize];
+        draw_update_badge(&mut buffer, WIDTH, HEIGHT, false);
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                if buffer[(y * WIDTH + x) as usize] != 0 {
+                    let distance = (x as f32 + 0.5 - UPDATE_CX).hypot(y as f32 + 0.5 - UPDATE_CY);
+                    assert!(distance <= CLOSE_R + 3.0, "Pixel {x},{y} is {distance} px from the badge centre.");
+                }
+            }
+        }
+        let pixel = buffer[((update_y + 2) * WIDTH + update_x - 6) as usize];
+        let (red, blue) = (((pixel >> 16) & 0xff) as i32, (pixel & 0xff) as i32);
+        assert!(blue - red > 100, "The badge is not accent blue: {pixel:08x}.");
+        assert_eq!(buffer[(close_y * WIDTH + close_x) as usize], 0, "The update badge reaches the close badge.");
     }
 }

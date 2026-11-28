@@ -21,13 +21,14 @@ ___
 | **Customizable shortcut** | Click *Global shortcut* on the *Settings* tab and press any combo (Ctrl / Alt / Shift + key). The default is `Ctrl+Space`. |
 | **Types as you speak** | The words appear at the cursor while you speak. The clipboard stays untouched. |
 | **Auto-stops on silence** | A forgotten recording does not run forever. It stops once neither sound nor words were detected for 15 s. The time can be changed. |
-| **Private and offline** | The Nemotron ONNX model runs locally. No internet, no accounts, no telemetry. |
+| **Private and offline** | The Nemotron ONNX model runs locally. No accounts, no telemetry. The app only goes online to download a model or to look for a new version, and only when you ask for it. |
 | **English or multilingual** | Pick the model. For the multilingual one, pick the spoken language or let the model detect it. |
 | **CPU or GPU** | Run the model on the processor or on any DirectX 12 graphics adapter. |
 | **Live waveform bubble** | A smooth, anti-aliased floating mic meter in one of six preset screen positions. It can also be dragged anywhere. |
 | **Tray mode** | Hide the bubble and watch the waveform pulse right in the taskbar tray instead. |
 | **Recent dictations** | A scrollable history. The icon next to each entry copies it, and each entry shows how fast it was processed. |
 | **Copy or paste on stop** | For apps where keystrokes trigger shortcuts, turn off live typing and let the transcript be copied to the clipboard or pasted once when the dictation stops. |
+| **Updates** | Shows when a new version is available and installs it with one click. Checks automatically every hour if you want. |
 | **Portable** | Settings, history and logs live next to the exe. |
 | **Everything toggleable** | Start with Windows, soft sound cues, model preloading and more. |
 
@@ -53,6 +54,7 @@ This is a fork of [snipemanmike/nemotron-bubble](https://github.com/snipemanmike
 | **Language selection** | Tell the multilingual model which language you speak instead of letting it guess. 15 languages are offered, and NVIDIA rates this as more accurate than auto-detection. |
 | **Microphone status at a glance** | Without a microphone the app keeps running instead of quitting. The bubble shows an amber dot and a crossed-out microphone, the tray icon is crossed out, and both tell the reason on hover. A microphone that is connected later is picked up automatically. |
 | **Close from the bubble** | A ✕ appears on the bubble's top-right edge while the mouse is over it and quits the app, so the tray menu is no longer the only way out. |
+| **App updates** | The app tells you when a new version is on GitHub: an arrow on the bubble, a dot on the tray icon and the new version next to its own. One click downloads, verifies and installs it and restarts the app. A version can be skipped. Checking is manual or every hour, as you like. |
 | **Clear error feedback** | A model that fails to load shows a message instead of the app silently quitting. A log file and `--self-test` help to find the cause. |
 | **Portable** | Settings, history and logs are stored next to the exe instead of in `%APPDATA%`. |
 | **App icon and version** | The exe has its own icon, and the version is shown in the application window, the tray menu and the file properties. |
@@ -184,6 +186,29 @@ On by default. The model is loaded at startup and kept in memory, so the first d
 | `Show floating bubble` | Off keeps the app in the tray only. | On |
 | `Bubble click opens window` | Off makes a click on the bubble start and stop the dictation instead. | On |
 | `Bubble position` | One of six presets: top or bottom, each left, center or right. Click the spot on the small picture of the screen. | Bottom right |
+| `Check for updates automatically` | Looks for a new version on GitHub 15 s after the start and then every hour. Off: only *Check now* looks. | Off |
+| `Updates` | The update state, e.g. *Up to date, checked 14:02.* **Check now** looks right away. With a new version available, a click on the state opens the [update panel](#updates). | - |
+
+### Updates
+
+New versions are published as GitHub releases. Click **Check now** on the *Settings* tab, or turn on *Check for updates automatically*. When a newer version is found, it is announced in three places:
+
+| Where | What you see |
+| --- | --- |
+| Floating bubble | A blue badge with an arrow on its top-left edge, always visible. Its tooltip names the version. |
+| Application window | A blue pill with the new version next to *Version* at the bottom right. |
+| Tray | A blue dot on the icon, a second line in its tooltip and the entry **Update to x.y.z...** in the menu. |
+
+Clicking any of them opens the update panel:
+
+<img src="docs/window-update.png" width="300" alt="The update panel" />
+
+| Button | Meaning |
+| --- | --- |
+| **Update now** | Downloads the new version, checks it against its SHA-256, installs it and restarts the app. Settings, history and models stay. Not possible while dictating or downloading a model. |
+| **Skip this version** | Hides the announcements until an even newer version appears. A skipped version can still be installed from the panel. |
+| **Later** | Closes the panel. The announcements stay. |
+| **Release notes on GitHub** | Opens the release page in the browser. |
 
 
 
@@ -194,6 +219,8 @@ Right-click the tray icon to open it.
 | Entry | Meaning |
 | --- | --- |
 | Version | The installed version, for information only. |
+| **Update to x.y.z...** | Only while a new version is available. Opens the [update panel](#updates). |
+| **Update to x.y.z...** | Only while a new version is available. Opens the [update panel](#updates). |
 | **Start** / **Stop** | Starts or stops the dictation, like the shortcut. |
 | **Show / Hide Bubble** | Hides or shows the floating bubble until the next start. The *Show floating bubble* setting stays unchanged. |
 | **Speech model** ▸ | The same choice as on the [*Model*](#speech-model) tab. Locked while dictating. |
@@ -213,6 +240,7 @@ DirectML.dll
 config\    settings.json, history.json, sounds\
 log\       nemotron-bubble.log, crash.log
 models\    nemotron\, nemotron_multi\
+update\    only while an update is downloaded or installed
 ```
 
 The folder must be writable, so don't put it under `C:\Program Files`. The only thing outside it is the *Start with Windows* entry in the registry, which is off by default and removed again when you turn the setting off.
@@ -226,6 +254,7 @@ ___
 | **Log file** | `log\nemotron-bubble.log` (next to the exe) records startup, microphone, model loading (folder, file sizes, mode, load time) and every error. |
 | **Self-test** | Run `nemotron-bubble.exe --self-test` from a terminal. It loads the model, runs a few chunks, and prints the device, the processing time per chunk, or the full error. |
 | **No microphone** | The app keeps running. The bubble shows a crossed-out microphone and the tray icon is crossed out, and both tell the reason on hover. The microphone is picked up automatically once it is connected. Starting dictation without one shows a warning. |
+| **Update fails** | The update panel shows the reason in red, and the log has the details. A failed update keeps the installed version. **Retry** resumes an interrupted download. |
 | **Model fails to load** | A dialog shows the reason. An interrupted download is the usual cause: `encoder.onnx.data` must be about 2.5 GB. On the *Model* tab, click **Check for updates**. A damaged file shows up as *Update available*, and **Update** downloads it again. |
 
 ___
@@ -252,4 +281,4 @@ ___
 ## Authors
 
 - **snipemanmike**: _v0.1_
-- **LittlePhoenix** with Claude: _v1.0_
+- **LittlePhoenix** with Claude: _v1.0 - v1.1_

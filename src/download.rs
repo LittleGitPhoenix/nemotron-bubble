@@ -215,7 +215,7 @@ pub(crate) fn refresh_local_model_state(app: &Arc<AppState>) {
     repaint_settings(app);
 }
 
-fn http_agent() -> ureq::Agent {
+pub(crate) fn http_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(20)))
         .timeout_recv_response(Some(Duration::from_secs(60)))
@@ -661,8 +661,9 @@ struct Progress<'a> {
 }
 
 impl Progress<'_> {
-    fn advance(&mut self, bytes: u64) {
-        self.done += bytes;
+    /// Count `bytes` more (fewer when negative, after a resumed download had to start over).
+    fn advance(&mut self, bytes: i64) {
+        self.done = self.done.saturating_add_signed(bytes);
         if self.last_report.elapsed() >= PROGRESS_INTERVAL {
             self.last_report = Instant::now();
             self.report();
@@ -684,17 +685,44 @@ impl Progress<'_> {
     }
 }
 
-/// Download one file into `<name>.part` and verify its SHA-256. An existing
+/// Download one model file into `<name>.part` and verify its SHA-256. An existing
 /// `.part` file is resumed. Returns Ok(false) when cancelled.
 fn download_file(progress: &mut Progress, dir: &Path, folder: &str, file: &ModelFile) -> Result<bool> {
     let part = dir.join(format!("{}.part", file.name));
+    let url = format!("https://huggingface.co/{HF_REPO}/resolve/main/{folder}/{}", file.name);
+    let app = progress.app;
+    download_verified(
+        &url,
+        &part,
+        file.size,
+        &file.sha256,
+        &file.name,
+        &|| app.download_cancel.load(Ordering::SeqCst),
+        &mut |bytes| progress.advance(bytes),
+    )
+}
+
+/// Download `url` into the file `part` and verify its size and SHA-256 (lowercase
+/// hex). An existing `part` is resumed with a Range request. `label` names the file
+/// in error messages. `cancelled` is asked between chunks, and `progress` gets the
+/// number of bytes added (negative when a resumed download had to start over).
+/// Returns Ok(false) when cancelled. Used for model files and app updates.
+pub(crate) fn download_verified(
+    url: &str,
+    part: &Path,
+    size: u64,
+    sha256: &str,
+    label: &str,
+    cancelled: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(i64),
+) -> Result<bool> {
     let mut hasher = Sha256::new();
     let mut have = 0u64;
 
     // Resume: hash what an earlier, interrupted download already stored.
-    if let Ok(meta) = fs::metadata(&part) {
-        if meta.len() <= file.size {
-            let mut existing = fs::File::open(&part)?;
+    if let Ok(meta) = fs::metadata(part) {
+        if meta.len() <= size {
+            let mut existing = fs::File::open(part)?;
             let mut buffer = vec![0u8; 1 << 20];
             loop {
                 let read = existing.read(&mut buffer)?;
@@ -703,40 +731,39 @@ fn download_file(progress: &mut Progress, dir: &Path, folder: &str, file: &Model
                 }
                 hasher.update(&buffer[..read]);
                 have += read as u64;
-                progress.advance(read as u64);
+                progress(read as i64);
             }
         }
     }
 
-    if have < file.size {
-        let url = format!("https://huggingface.co/{HF_REPO}/resolve/main/{folder}/{}", file.name);
-        let mut request = http_agent().get(&url);
+    if have < size {
+        let mut request = http_agent().get(url);
         if have > 0 {
             request = request.header("Range", format!("bytes={have}-"));
         }
         let response = request
             .call()
-            .with_context(|| format!("could not download {}", file.name))?;
+            .with_context(|| format!("could not download {label}"))?;
         let resumed = have > 0 && response.status().as_u16() == 206;
         let mut out = if resumed {
-            fs::OpenOptions::new().append(true).open(&part)?
+            fs::OpenOptions::new().append(true).open(part)?
         } else {
             // Fresh start (or the server ignored the range): drop what was counted.
-            progress.done -= have;
+            progress(-(have as i64));
             have = 0;
             hasher = Sha256::new();
-            fs::File::create(&part).with_context(|| format!("could not create {}", part.display()))?
+            fs::File::create(part).with_context(|| format!("could not create {}", part.display()))?
         };
         let mut reader = response.into_body().into_reader();
         let mut buffer = vec![0u8; 256 * 1024];
         loop {
-            if progress.app.download_cancel.load(Ordering::SeqCst) {
+            if cancelled() {
                 out.flush()?;
                 return Ok(false);
             }
             let read = reader
                 .read(&mut buffer)
-                .with_context(|| format!("the download of {} was interrupted", file.name))?;
+                .with_context(|| format!("the download of {label} was interrupted"))?;
             if read == 0 {
                 break;
             }
@@ -744,25 +771,25 @@ fn download_file(progress: &mut Progress, dir: &Path, folder: &str, file: &Model
                 .with_context(|| format!("could not write {} (disk full?)", part.display()))?;
             hasher.update(&buffer[..read]);
             have += read as u64;
-            progress.advance(read as u64);
+            progress(read as i64);
         }
         out.flush()?;
     }
 
-    if have != file.size {
-        bail!("{}: received {have} of {} bytes", file.name, file.size);
+    if have != size {
+        bail!("{label}: received {have} of {size} bytes");
     }
-    let sha256 = to_hex(&hasher.finalize());
-    if sha256 != file.sha256 {
-        let _ = fs::remove_file(&part);
-        bail!("{} is damaged (SHA-256 does not match). Download it again.", file.name);
+    let actual = to_hex(&hasher.finalize());
+    if !actual.eq_ignore_ascii_case(sha256) {
+        let _ = fs::remove_file(part);
+        bail!("{label} is damaged (SHA-256 does not match). Download it again.");
     }
     Ok(true)
 }
 
 /// Replace `target` with `source`. Retries for a while, because a model that
 /// was just unloaded may still hold its files open for a moment.
-fn replace_file(source: &Path, target: &Path) -> Result<()> {
+pub(crate) fn replace_file(source: &Path, target: &Path) -> Result<()> {
     let mut attempt = 0;
     loop {
         match fs::rename(source, target) {
@@ -907,5 +934,198 @@ mod tests {
         let backup = backup_model(&dir).unwrap();
         assert_eq!(backup, root.path().join("nemotron_multi_unknown"));
         assert!(!backup.join(MANIFEST_NAME).exists());
+    }
+
+    // ---- download_verified against a local HTTP server ----
+
+    /// How the test server answers a request with a Range header.
+    #[derive(Clone, Copy)]
+    enum RangeSupport {
+        Honored,
+        Ignored,
+    }
+
+    /// An HTTP server on 127.0.0.1 that serves `body` to the next `connections`
+    /// requests and records the head of each request.
+    struct TestServer {
+        url: String,
+        requests: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TestServer {
+        fn start(body: &[u8], range: RangeSupport, connections: usize) -> TestServer {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/file.bin", listener.local_addr().unwrap());
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let recorded = requests.clone();
+            let body = body.to_vec();
+            thread::spawn(move || {
+                for stream in listener.incoming().take(connections) {
+                    let Ok(mut stream) = stream else {
+                        continue;
+                    };
+                    let head = read_request_head(&mut stream);
+                    let start = match range {
+                        RangeSupport::Honored => requested_start(&head),
+                        RangeSupport::Ignored => None,
+                    };
+                    recorded.lock().unwrap().push(head);
+                    let (status, content) = match start {
+                        Some(start) => (
+                            format!(
+                                "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{}/{}\r\nContent-Length: {}\r\n",
+                                body.len() - 1,
+                                body.len(),
+                                body.len() - start
+                            ),
+                            &body[start..],
+                        ),
+                        None => (
+                            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n", body.len()),
+                            &body[..],
+                        ),
+                    };
+                    // A cancelled download closes the connection early, so write errors are expected.
+                    let _ = stream.write_all(format!("{status}Connection: close\r\n\r\n").as_bytes());
+                    let _ = stream.write_all(content);
+                }
+            });
+            TestServer { url, requests }
+        }
+
+        /// The heads of all requests so far, lowercase.
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().unwrap().iter().map(|head| head.to_ascii_lowercase()).collect()
+        }
+    }
+
+    fn read_request_head(stream: &mut std::net::TcpStream) -> String {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).is_ok_and(|read| read == 1) {
+            head.push(byte[0]);
+        }
+        String::from_utf8_lossy(&head).into_owned()
+    }
+
+    /// The start of a "Range: bytes=<start>-" header.
+    fn requested_start(head: &str) -> Option<usize> {
+        head.lines()
+            .find_map(|line| line.to_ascii_lowercase().strip_prefix("range: bytes=").map(str::to_string))
+            .and_then(|range| range.trim_end_matches('-').parse().ok())
+    }
+
+    /// 100 kB that are not all alike, so a byte in the wrong place changes the hash.
+    fn test_body() -> Vec<u8> {
+        (0..100_000u32).map(|index| (index % 251) as u8).collect()
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        to_hex(&Sha256::digest(bytes))
+    }
+
+    /// Runs download_verified and returns its result and the sum of the reported progress.
+    fn download(server: &TestServer, part: &Path, size: u64, sha256: &str, cancel: bool) -> (Result<bool>, i64) {
+        let mut reported = 0i64;
+        let result = download_verified(&server.url, part, size, sha256, "file.bin", &|| cancel, &mut |bytes| {
+            reported += bytes
+        });
+        (result, reported)
+    }
+
+    #[test]
+    fn a_file_is_downloaded_and_verified() {
+        let dir = TestDir::new("download-fresh");
+        let part = dir.path().join("file.bin.part");
+        let body = test_body();
+        let server = TestServer::start(&body, RangeSupport::Honored, 1);
+
+        let (result, reported) = download(&server, &part, body.len() as u64, &sha256_hex(&body), false);
+        assert!(result.unwrap());
+        assert_eq!(fs::read(&part).unwrap(), body);
+        assert_eq!(reported, body.len() as i64);
+        assert!(!server.requests()[0].contains("range:"));
+    }
+
+    #[test]
+    fn an_interrupted_download_resumes_with_a_range_request() {
+        let dir = TestDir::new("download-resume");
+        let part = dir.path().join("file.bin.part");
+        let body = test_body();
+        fs::write(&part, &body[..30_000]).unwrap();
+        let server = TestServer::start(&body, RangeSupport::Honored, 1);
+
+        let (result, reported) = download(&server, &part, body.len() as u64, &sha256_hex(&body), false);
+        assert!(result.unwrap());
+        assert_eq!(fs::read(&part).unwrap(), body);
+        assert_eq!(reported, body.len() as i64);
+        assert!(server.requests()[0].contains("range: bytes=30000-"));
+    }
+
+    #[test]
+    fn a_server_that_ignores_the_range_makes_the_download_start_over() {
+        let dir = TestDir::new("download-range-ignored");
+        let part = dir.path().join("file.bin.part");
+        let body = test_body();
+        fs::write(&part, &body[..30_000]).unwrap();
+        let server = TestServer::start(&body, RangeSupport::Ignored, 1);
+
+        let (result, reported) = download(&server, &part, body.len() as u64, &sha256_hex(&body), false);
+        assert!(result.unwrap());
+        assert_eq!(fs::read(&part).unwrap(), body, "the old part must not stay in front of the new data");
+        assert_eq!(reported, body.len() as i64, "the bytes counted before the restart are taken back");
+    }
+
+    #[test]
+    fn a_part_larger_than_the_file_is_downloaded_again() {
+        let dir = TestDir::new("download-oversized-part");
+        let part = dir.path().join("file.bin.part");
+        let body = test_body();
+        let mut oversized = body.clone();
+        oversized.extend_from_slice(b"garbage");
+        fs::write(&part, &oversized).unwrap();
+        let server = TestServer::start(&body, RangeSupport::Honored, 1);
+
+        let (result, _) = download(&server, &part, body.len() as u64, &sha256_hex(&body), false);
+        assert!(result.unwrap());
+        assert_eq!(fs::read(&part).unwrap(), body);
+        assert!(!server.requests()[0].contains("range:"));
+    }
+
+    #[test]
+    fn a_wrong_sha256_fails_and_deletes_the_part() {
+        let dir = TestDir::new("download-bad-hash");
+        let part = dir.path().join("file.bin.part");
+        let body = test_body();
+        let server = TestServer::start(&body, RangeSupport::Honored, 1);
+
+        let (result, _) = download(&server, &part, body.len() as u64, &sha256_hex(b"other content"), false);
+        let error = format!("{:#}", result.unwrap_err());
+        assert!(error.contains("damaged"), "{error}");
+        assert!(!part.exists(), "a damaged file must not be resumed later");
+    }
+
+    #[test]
+    fn a_file_shorter_than_expected_fails() {
+        let dir = TestDir::new("download-short");
+        let part = dir.path().join("file.bin.part");
+        let body = test_body();
+        let server = TestServer::start(&body, RangeSupport::Honored, 1);
+
+        let (result, _) = download(&server, &part, body.len() as u64 + 5, &sha256_hex(&body), false);
+        let error = format!("{:#}", result.unwrap_err());
+        assert!(error.contains("received 100000 of 100005 bytes"), "{error}");
+    }
+
+    #[test]
+    fn a_cancelled_download_keeps_its_part_for_resuming() {
+        let dir = TestDir::new("download-cancel");
+        let part = dir.path().join("file.bin.part");
+        let body = test_body();
+        let server = TestServer::start(&body, RangeSupport::Honored, 1);
+
+        let (result, _) = download(&server, &part, body.len() as u64, &sha256_hex(&body), true);
+        assert!(!result.unwrap());
+        assert!(part.exists());
     }
 }

@@ -1,0 +1,20 @@
+{
+  "projects": {
+    "nemotron-bubble": {
+      "version": "1.2.0",
+      "release": "nemotron-bubble.1.2.0",
+      "date": "2026-12-05",
+      "changelog": "## 1.2.0\n\n📅 _2026-12-05_\n\n### Added\n\n- Example entry.",
+      "assets": {
+        "win-x64": "https://github.com/LittleGitPhoenix/nemotron-bubble/releases/download/nemotron-bubble.1.2.0/nemotron-bubble.1.2.0.win-x64.tgz"
+      },
+      "sha256": {
+        "win-x64": "1eb88d8db34e2ec8e0c0417c20be2d67d9cdd900147bdde9e564d3cc85fe99a4"
+      },
+      "size": {
+        "win-x64": 18886659
+      }
+    }
+  },
+  "generated": "2026-11-28T10:43:46.9955787Z"
+}

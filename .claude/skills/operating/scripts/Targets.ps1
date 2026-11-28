@@ -5,7 +5,7 @@
 # Settings tab entries are in content coordinates (the position at scroll offset 0). That tab
 # scrolls by up to SETTINGS_MAX_SCROLL px, Invoke-Target.ps1 scrolls it to the top or bottom first.
 
-$script:SettingsTabMaxScroll = 90 # SETTINGS_CONTENT_BOTTOM (870) - SETTINGS_VIEW_BOTTOM (780)
+$script:SettingsTabMaxScroll = 187 # SETTINGS_CONTENT_BOTTOM (967) - SETTINGS_VIEW_BOTTOM (780)
 $script:SettingsViewBottom = 780  # rows whose center lies below this need the tab scrolled down
 
 $script:Targets = [ordered]@{
@@ -14,6 +14,13 @@ $script:Targets = [ordered]@{
 	'Tab:History'          = @{ Tab = $null; X = 78; Y = 93 }
 	'Tab:Model'            = @{ Tab = $null; X = 195; Y = 93 }
 	'Tab:Settings'         = @{ Tab = $null; X = 312; Y = 93 }
+	'Footer:Update'        = @{ Tab = $null; X = 333; Y = 799 } # the pill of an available update, opens the update panel
+
+	# Update panel (over the card of any tab while it is open, callout top 236)
+	'Update:Now'           = @{ Tab = $null; X = 196; Y = 439 } # Update now / Retry, and Cancel while downloading
+	'Update:Skip'          = @{ Tab = $null; X = 120; Y = 481 }
+	'Update:Later'         = @{ Tab = $null; X = 272; Y = 481 }
+	'Update:ReleaseNotes'  = @{ Tab = $null; X = 120; Y = 355 } # opens the release page in the browser
 
 	# History tab (copy icons move with the list, only the first one is fixed)
 	'Trash'                = @{ Tab = 'History'; X = 336; Y = 142 }
@@ -37,6 +44,10 @@ $script:Targets = [ordered]@{
 	'Shortcut'             = @{ Tab = 'Settings'; X = 277; Y = 147 } # starts or cancels the key capture
 	'Microphone'           = @{ Tab = 'Settings'; X = 196; Y = 240 } # opens a popup menu
 	'AutoStop'             = @{ Tab = 'Settings'; X = 308; Y = 688 } # opens a popup menu (row index 8)
+	# App updates at the end of the tab: row 12 (switch) and row 13 (state line and Check now)
+	'Toggle:AutoUpdate'    = @{ Tab = 'Settings'; X = 329; Y = 884 }
+	'Updates:CheckNow'     = @{ Tab = 'Settings'; X = 294; Y = 933 }
+	'Updates:State'        = @{ Tab = 'Settings'; X = 100; Y = 941 } # opens the update panel while a version is available
 }
 
 # The spots of the bubble position picker (96 x 42 px at 256,816, cells of 32 x 18 px),

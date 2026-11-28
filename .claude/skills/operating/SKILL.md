@@ -64,10 +64,11 @@ $w = '<scratch>\nemotron-bubble\<chat>\app'
 
 | Tab | Targets |
 | --- | --- |
-| all | `Close`, `Tab:History`, `Tab:Model`, `Tab:Settings` |
+| all | `Close`, `Tab:History`, `Tab:Model`, `Tab:Settings`, `Footer:Update` (the pill of an available update) |
+| Update panel (any tab, while open) | `Update:Now` (also Retry, and Cancel while downloading), `Update:Skip`, `Update:Later`, `Update:ReleaseNotes` (opens the browser) |
 | History | `Trash` (clears the history without asking), `Copy:First` |
 | Model | `Processing:CPU/GPU/Auto`, `Model:English/Multilingual/Predefined`, `CheckForUpdates`, `Download:English/Multilingual` (whatever the row's button says: Download, Update, Resume, Retry, Cancel), `Language` (menu), `Toggle:Preload`, `Notice:Close` (the ✕ of the model notice. While the notice shows, clicks on its callout do nothing, so `Language` and `Toggle:Preload` below it are blocked.) |
-| Settings | `Shortcut`, `Microphone` (menu), `AutoStop` (menu), `BubblePosition:TopLeft/TopCenter/TopRight/BottomLeft/BottomCenter/BottomRight` (the spots of the screen picker), `Toggle:StartWithWindows`, `Toggle:LiveType`, `Toggle:CopyFinal`, `Toggle:PasteFinal`, `Toggle:Sounds`, `Toggle:Waveform`, `Toggle:TrayAnimation`, `Toggle:EnterStops`, `Toggle:FloatingBubble`, `Toggle:BubbleClickOpensWindow` |
+| Settings | `Shortcut`, `Microphone` (menu), `AutoStop` (menu), `BubblePosition:TopLeft/TopCenter/TopRight/BottomLeft/BottomCenter/BottomRight` (the spots of the screen picker), `Toggle:StartWithWindows`, `Toggle:LiveType`, `Toggle:CopyFinal`, `Toggle:PasteFinal`, `Toggle:Sounds`, `Toggle:Waveform`, `Toggle:TrayAnimation`, `Toggle:EnterStops`, `Toggle:FloatingBubble`, `Toggle:BubbleClickOpensWindow`, `Toggle:AutoUpdate`, `Updates:CheckNow`, `Updates:State` (opens the update panel while a version is available) |
 
 The coordinates mirror the layout constants in `src/ui/application_window/*.rs`. **When a change moves, adds or removes an element, update `Targets.ps1` in the same change** and check the affected targets with a click and a screenshot.
 
@@ -82,7 +83,7 @@ The coordinates mirror the layout constants in `src/ui/application_window/*.rs`.
 - Without `-UseModels` the test copy has no models. That is the right state for testing downloads (2.5 GB per model, so check the connection speed first). With `-UseModels` the models are the user's: never download, update or edit them in such a test, because an update writes where the model was found.
 - `preload_model` defaults to false in test copies, so no 2.5 GB load happens unless a test needs it. Load time is about 2 s on the CPU. Wait with `Get-State.ps1 -WaitFor 'Nemotron loaded'`.
 - The app is not DPI-aware. Click coordinates are always the layout constants. On a scaled display, screenshot pixels can differ from them.
-- The Settings tab scrolls by up to 90 px (two notches). `Invoke-Target.ps1` scrolls to the top or bottom before clicking a Settings-tab target. Clicks outside the card are ignored.
+- The Settings tab scrolls by up to 187 px (four notches). `Invoke-Target.ps1` scrolls to the top or bottom before clicking a Settings-tab target. Clicks outside the card are ignored.
 - **Cannot be tested from a script**: the global hotkey, real dictation, microphone input, typing into other apps, hover effects. Say so and ask the user to try them.
 - `--self-test` needs no UI: `Start-Nemotron.ps1 -NoStart -UseModels`, then run `<dir>\nemotron-bubble.exe --self-test` with the working directory it prints.
 
@@ -99,5 +100,7 @@ The coordinates mirror the layout constants in `src/ui/application_window/*.rs`.
 **Tray menu**: `Select-MenuItem.ps1 -ProcessId <n> -Tray` opens it. Pick with `-Index`, or open a submenu with `-Index k -Right -SubIndex m`.
 
 **Download test**: start without `-UseModels`, `Invoke-Target -Target CheckForUpdates`, then `Download:English`. Screenshot during the download, `Get-State -WaitFor 'model downloaded' -Timeout 120 -Models` afterwards.
+
+**Update test**: write an `updater.json` that offers a published release under a version above the build's own (`size` and `sha256` of its archive, see README_Technical.md), then start the copy with `NEMOTRON_UPDATE_MANIFEST` set in the same PowerShell call: `$env:NEMOTRON_UPDATE_MANIFEST = '<file>'; & "$s\Start-Nemotron.ps1" -WorkDir $w -Build`. `Updates:CheckNow` finds it, `Update:Now` installs it and the app restarts as the published version under a new PID, so look it up with `Get-Process`. A copy started without the variable asks GitHub. A screenshot with `-Screen` (e.g. of the tray menu) needs the application window open.
 
 **Toggle a switch and check it**: `Invoke-Target -Target Toggle:Sounds`, then `Get-State` shows the new value in `settings.json`.

@@ -40,6 +40,11 @@ pub(crate) struct AppSettings {
     /// Input device by its Windows name, e.g. "Microphone (USB Audio)". Empty:
     /// follow the Windows default input device.
     pub(crate) microphone: String,
+    /// Look for a new app version on GitHub after the start and every hour.
+    pub(crate) check_updates_automatically: bool,
+    /// The app version the user chose to skip, e.g. "1.2.0". Only a newer version
+    /// is offered again. Empty: nothing skipped.
+    pub(crate) skipped_update: String,
 }
 
 /// Preset positions of the floating bubble, in the primary monitor's work area
@@ -303,6 +308,9 @@ impl Default for AppSettings {
             compute: ComputeChoice::Cpu,
             bubble_position: BubblePosition::BottomRight,
             microphone: String::new(),
+            // Off by default: the app goes online only when the user asks for it.
+            check_updates_automatically: false,
+            skipped_update: String::new(),
         }
     }
 }
@@ -370,6 +378,9 @@ pub(crate) fn toggle_setting(app: &Arc<AppState>, id: usize) {
             }
             SETTINGS_TOGGLE_ENTER_STOPS => {
                 settings.enter_stops_recording = !settings.enter_stops_recording
+            }
+            SETTINGS_TOGGLE_AUTO_UPDATE => {
+                settings.check_updates_automatically = !settings.check_updates_automatically
             }
             _ => {}
         }

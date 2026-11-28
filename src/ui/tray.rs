@@ -7,6 +7,9 @@ pub(crate) const WM_TRAYICON: u32 = WM_USER + 1;
 pub(crate) const IDM_START_STOP: usize = 1001;
 pub(crate) const IDM_SHOW_HIDE: usize = 1002;
 pub(crate) const IDM_QUIT: usize = 1004;
+pub(crate) const IDM_UPDATE: usize = 1005;
+// Segoe MDL2 Assets "Up" arrow: the mark of an available update (tray menu, footer pill).
+pub(crate) const GLYPH_UPDATE: &str = "\u{E74A}";
 // Tray "Speech model" submenu: one id per ModelChoice, in ModelChoice::ALL order.
 pub(crate) const IDM_MODEL_BASE: usize = 1100;
 // "Language" menus (tray submenu and the popup in the application window): one id per LANGUAGES entry.
@@ -24,7 +27,7 @@ pub(crate) static CURRENT_TRAY_ICON: AtomicIsize = AtomicIsize::new(0);
 pub(crate) unsafe fn add_tray_icon(hwnd: HWND) {
     // Track only the icon we own. If creation fails, fall back to the shared system
     // icon for display but store 0 so it is never passed to DestroyIcon.
-    let icon = make_tray_icon(0.0, false, false);
+    let icon = make_tray_icon(0.0, false, false, false);
     let shown = if icon == null_mut() {
         LoadIconW(null_mut(), IDI_APPLICATION)
     } else {
@@ -37,21 +40,26 @@ pub(crate) unsafe fn add_tray_icon(hwnd: HWND) {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = shown;
-    fill_wide_fixed(&mut nid.szTip, &tray_tooltip(None));
+    fill_wide_fixed(&mut nid.szTip, &tray_tooltip(None, None));
     Shell_NotifyIconW(NIM_ADD, &mut nid);
     CURRENT_TRAY_ICON.store(icon as isize, Ordering::SeqCst);
 }
 
-/// Tray tooltip text: the version, plus the reason when no microphone is available.
-/// Windows cuts it off after 127 characters.
-fn tray_tooltip(mic_error: Option<&str>) -> String {
-    match mic_error {
-        Some(reason) => format!("Nemotron Bubble {APP_VERSION}\nNo microphone: {reason}"),
-        None => format!("Nemotron Bubble {APP_VERSION}"),
+/// Tray tooltip text: the version, an available update, and the reason when no
+/// microphone is available. Windows cuts it off after 127 characters, so the
+/// update line comes before the reason, which may be long.
+fn tray_tooltip(mic_error: Option<&str>, update: Option<&str>) -> String {
+    let mut text = format!("Nemotron Bubble {APP_VERSION}");
+    if let Some(version) = update {
+        text.push_str(&format!("\nUpdate available: {version}"));
     }
+    if let Some(reason) = mic_error {
+        text.push_str(&format!("\nNo microphone: {reason}"));
+    }
+    text
 }
 
-pub(crate) unsafe fn update_tray_tooltip(hwnd: HWND, mic_error: Option<&str>) {
+pub(crate) unsafe fn update_tray_tooltip(hwnd: HWND, mic_error: Option<&str>, update: Option<&str>) {
     if hwnd == null_mut() {
         return;
     }
@@ -60,7 +68,7 @@ pub(crate) unsafe fn update_tray_tooltip(hwnd: HWND, mic_error: Option<&str>) {
     nid.hWnd = hwnd;
     nid.uID = TRAY_ID;
     nid.uFlags = NIF_TIP;
-    fill_wide_fixed(&mut nid.szTip, &tray_tooltip(mic_error));
+    fill_wide_fixed(&mut nid.szTip, &tray_tooltip(mic_error, update));
     Shell_NotifyIconW(NIM_MODIFY, &mut nid);
 }
 
@@ -106,6 +114,10 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
 
     // The version heads the menu as information, Quit ends it like in other Windows apps.
     append_menu_item(menu, MF_STRING | MF_GRAYED, 0, &format!("Nemotron Bubble {APP_VERSION}"));
+    // An available update sits right below the version. It opens the update panel.
+    if let Some(version) = APP.get().and_then(pending_update_version) {
+        append_accent_menu_item(menu, IDM_UPDATE, &format!("Update to {version}..."), GLYPH_UPDATE);
+    }
     append_menu_separator(menu);
     append_menu_item(menu, MF_STRING, IDM_START_STOP, if recording { "Stop" } else { "Start" });
     append_menu_item(menu, MF_STRING, IDM_SHOW_HIDE, "Show / Hide Bubble");
@@ -152,9 +164,10 @@ pub(crate) unsafe fn show_tray_menu(hwnd: HWND) {
 
 /// Build a 32x32 tray icon. While recording the equalizer bars scale with `level`
 /// and a small red dot appears; idle shows a static dim glyph, crossed out in amber
-/// with `mic_missing`. The caller owns the returned HICON and must DestroyIcon it
+/// with `mic_missing`. `update_dot` adds a blue dot at the bottom right for an
+/// available update. The caller owns the returned HICON and must DestroyIcon it
 /// when replaced.
-pub(crate) unsafe fn make_tray_icon(level: f32, recording: bool, mic_missing: bool) -> HICON {
+pub(crate) unsafe fn make_tray_icon(level: f32, recording: bool, mic_missing: bool, update_dot: bool) -> HICON {
     const SIZE: i32 = 32;
     let mut pixels = vec![0u32; (SIZE * SIZE) as usize];
     let center = (SIZE as f32 - 1.0) / 2.0;
@@ -234,6 +247,25 @@ pub(crate) unsafe fn make_tray_icon(level: f32, recording: bool, mic_missing: bo
         }
     }
 
+    if update_dot {
+        // Accent dot in a dark ring, so it stands out on the glyph and on any taskbar.
+        let (cx, cy) = (25.5f32, 25.5f32);
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let d = (x as f32 + 0.5 - cx).hypot(y as f32 + 0.5 - cy);
+                let idx = (y * SIZE + x) as usize;
+                let ring = (6.4 - d).clamp(0.0, 1.0);
+                if ring > 0.0 {
+                    pixels[idx] = argb(0x1A, 0x1D, 0x21, ring.max(pixel_alpha(pixels[idx])));
+                }
+                let dot = (4.6 - d).clamp(0.0, 1.0);
+                if dot > 0.0 {
+                    pixels[idx] = blend_over(pixels[idx], (0x6E, 0xA2, 0xFF), dot);
+                }
+            }
+        }
+    }
+
     let color = CreateBitmap(SIZE, SIZE, 1, 32, pixels.as_ptr() as _);
     let mask_bits = vec![0u8; ((SIZE * SIZE) / 8) as usize];
     let mask = CreateBitmap(SIZE, SIZE, 1, 1, mask_bits.as_ptr() as _);
@@ -274,10 +306,30 @@ pub(crate) unsafe fn update_tray_icon(hwnd: HWND, icon: HICON) {
     }
 }
 
-/// The idle tray icon, crossed out while no microphone is available.
+/// Alpha (0..1) of a 0xAARRGGBB icon pixel.
+fn pixel_alpha(pixel: u32) -> f32 {
+    (pixel >> 24) as f32 / 255.0
+}
+
+/// A 0xAARRGGBB icon pixel (straight, not premultiplied alpha) of (r, g, b) with `alpha`.
+fn argb(r: u8, g: u8, b: u8, alpha: f32) -> u32 {
+    ((alpha * 255.0).round() as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
+
+/// Paint the opaque `color` over the icon `pixel` with coverage `amount`.
+fn blend_over(pixel: u32, color: (u8, u8, u8), amount: f32) -> u32 {
+    let mix = |shift: u32, value: u8| {
+        let below = ((pixel >> shift) & 0xFF) as f32;
+        ((value as f32 * amount + below * (1.0 - amount)).round() as u32) << shift
+    };
+    mix(24, 0xFF) | mix(16, color.0) | mix(8, color.1) | mix(0, color.2)
+}
+
+/// The idle tray icon, crossed out while no microphone is available, with a dot
+/// while an update is available.
 pub(crate) unsafe fn make_idle_tray_icon(app: &Arc<AppState>) -> HICON {
     let mic_missing = lock_ui(app).mic_error.is_some();
-    make_tray_icon(0.0, false, mic_missing)
+    make_tray_icon(0.0, false, mic_missing, pending_update_version(app).is_some())
 }
 
 /// Reset the tray icon to its idle glyph.

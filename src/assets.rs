@@ -7,6 +7,7 @@
 //! | `bubble.png` | the floating bubble on transparency, with its soft shadow |
 //! | `demo.gif` | the waveform pulsing on a gradient, as a seamless loop |
 //! | `window-history.png`, `window-model.png`, `window-settings.png` | the tabs of the application window with demo data |
+//! | `window-update.png` | the update panel over the Model tab, offering the next minor version |
 //!
 //! Run with `cargo run --release --features assets -- --render-assets docs`. The exe
 //! icon comes from `--render-icon assets/nemotron-bubble.ico`.
@@ -82,16 +83,39 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
             ..AppSettings::default()
         };
         let ready = ready_status(&AppSettings::default());
-        for (tab, name, settings, status, model_status) in [
-            (TAB_HISTORY, "window-history.png", AppSettings::default(), ready.as_str(), ""),
+        // window-update.png: the update panel over the Model tab, with the next minor version available.
+        let current = semver::Version::parse(APP_VERSION)?;
+        let next = semver::Version::new(current.major, current.minor + 1, 0);
+        let update_offered = UpdateView {
+            state: UpdateState {
+                available: Some(AvailableUpdate {
+                    release: format!("nemotron-bubble.{next}"),
+                    version: next.clone(),
+                    date: Some("2026-12-05".to_string()),
+                    url: String::new(),
+                    sha256: String::new(),
+                    size: 12_400_000,
+                }),
+                checked_at: Some("14:02".to_string()),
+                panel_open: true,
+                ..UpdateState::default()
+            },
+            skipped: false,
+        };
+        let model_status = "Loaded: Multilingual (German) · CPU";
+        let update_status = format!("Nemotron Bubble {next} is available.");
+        for (tab, name, settings, status, model_status, update) in [
+            (TAB_HISTORY, "window-history.png", AppSettings::default(), ready.as_str(), "", UpdateView::default()),
             (
                 TAB_MODEL,
                 "window-model.png",
-                multilingual,
+                multilingual.clone(),
                 "Downloading the English model...",
-                "Loaded: Multilingual (German) · CPU",
+                model_status,
+                UpdateView::default(),
             ),
-            (TAB_SETTINGS, "window-settings.png", AppSettings::default(), ready.as_str(), ""),
+            (TAB_SETTINGS, "window-settings.png", AppSettings::default(), ready.as_str(), "", UpdateView::default()),
+            (TAB_MODEL, "window-update.png", multilingual, update_status.as_str(), model_status, update_offered),
         ] {
             if let Some(mut canvas) = unsafe { Canvas::new(cw, ch) } {
                 let view = HistoryView {
@@ -130,6 +154,7 @@ pub(crate) fn render_assets(out_dir: &str) -> Result<()> {
                         &settings_view,
                         &downloads,
                         None,
+                        &update,
                         false,
                         tab,
                     )

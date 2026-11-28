@@ -1,6 +1,7 @@
 //! Drawing toolkit: the off-screen canvas, anti-aliased shapes, text helpers and fonts.
 
 use crate::*;
+use windows_sys::Win32::Graphics::Gdi::GetTextExtentPoint32W;
 
 pub(crate) static UI_FONT: OnceCell<isize> = OnceCell::new();
 pub(crate) static TITLE_FONT: OnceCell<isize> = OnceCell::new();
@@ -395,6 +396,19 @@ pub(crate) fn tiny_font() -> isize {
 /// Larger icon-font glyphs, e.g. the trash bin.
 pub(crate) fn icon_font_large() -> isize {
     *ICON_FONT_LARGE.get_or_init(|| unsafe { create_font_face("Segoe MDL2 Assets", -15, FW_NORMAL as i32) })
+}
+
+/// Width of `text` in `font`, measured on the screen, so no canvas is needed
+/// (e.g. for hit areas that depend on a text's width).
+pub(crate) unsafe fn text_width_in(font: isize, text: &str) -> i32 {
+    let screen = GetDC(null_mut());
+    let old_font = SelectObject(screen, font as _);
+    let wide: Vec<u16> = text.encode_utf16().collect();
+    let mut size = SIZE { cx: 0, cy: 0 };
+    GetTextExtentPoint32W(screen, wide.as_ptr(), wide.len() as i32, &mut size);
+    SelectObject(screen, old_font);
+    ReleaseDC(null_mut(), screen);
+    size.cx
 }
 
 pub(crate) fn rgb(red: u8, green: u8, blue: u8) -> u32 {

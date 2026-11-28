@@ -22,8 +22,13 @@ const PICKER_TASKBAR_HEIGHT: i32 = 6;
 const PICKER_COLUMNS: i32 = 3;
 // The auto-stop button fits its widest value ("5 min") plus padding.
 const AUTO_STOP_BUTTON_WIDTH: i32 = 88;
-// Bottom of the content: the bubble position picker plus the card's padding.
-pub(crate) const SETTINGS_CONTENT_BOTTOM: i32 = BUBBLE_POSITION_ROW_TOP + 3 + PICKER_HEIGHT + 12;
+// App updates come last: the switch for automatic checks, then the Updates row
+// with its state and the Check now button.
+pub(crate) const AUTO_UPDATE_ROW_TOP: i32 = settings_row_top(SETTINGS_TAB_TOGGLES.len() + 2);
+pub(crate) const UPDATES_ROW_TOP: i32 = settings_row_top(SETTINGS_TAB_TOGGLES.len() + 3);
+const CHECK_NOW_BUTTON_WIDTH: i32 = 116;
+// Bottom of the content: the Updates row plus the card's padding.
+pub(crate) const SETTINGS_CONTENT_BOTTOM: i32 = UPDATES_ROW_TOP + 44 + 12;
 pub(crate) const SETTINGS_MAX_SCROLL: i32 = if SETTINGS_CONTENT_BOTTOM > SETTINGS_VIEW_BOTTOM {
     SETTINGS_CONTENT_BOTTOM - SETTINGS_VIEW_BOTTOM
 } else {
@@ -162,6 +167,44 @@ pub(crate) fn settings_auto_stop_rect() -> RectI {
     }
 }
 
+/// The Check now button of the Updates row.
+pub(crate) fn check_now_rect() -> RectI {
+    RectI {
+        left: WINDOW_INNER_RIGHT - CHECK_NOW_BUTTON_WIDTH,
+        top: UPDATES_ROW_TOP + 6,
+        right: WINDOW_INNER_RIGHT,
+        bottom: UPDATES_ROW_TOP + 38,
+    }
+}
+
+/// The state line of the Updates row. With an available version it opens the update panel.
+fn updates_detail_rect() -> RectI {
+    RectI {
+        left: WINDOW_INNER_LEFT,
+        top: UPDATES_ROW_TOP + 21,
+        right: check_now_rect().left - 10,
+        bottom: UPDATES_ROW_TOP + 39,
+    }
+}
+
+/// The state line of the Updates row and its color.
+fn updates_detail(update: &UpdateView) -> (String, Rgb) {
+    const GREY: Rgb = (124, 134, 148);
+    let state = &update.state;
+    if state.activity == UpdateActivity::Checking {
+        return ("Checking GitHub...".to_string(), GREY);
+    }
+    if let Some(error) = &state.check_error {
+        return (format!("Check failed: {error}"), (240, 128, 128));
+    }
+    match (&state.available, update.skipped, &state.checked_at) {
+        (Some(available), false, _) => (format!("Version {} available.", available.version), (130, 176, 255)),
+        (Some(available), true, _) => (format!("Version {} skipped.", available.version), GREY),
+        (None, _, Some(time)) => (format!("Up to date, checked {time}."), (110, 200, 140)),
+        (None, _, None) => ("Not checked yet.".to_string(), GREY),
+    }
+}
+
 /// The small screen of the bubble position picker, right of its label.
 pub(crate) fn bubble_position_picker_rect() -> RectI {
     let top = BUBBLE_POSITION_ROW_TOP + 3;
@@ -233,13 +276,17 @@ pub(crate) fn handle_settings_tab_click(app: &Arc<AppState>, x: i32, y: i32) {
     let Some(y) = settings_content_y(app, y) else {
         return;
     };
-    for id in SETTINGS_TAB_TOGGLES {
+    for id in SETTINGS_TAB_TOGGLES.into_iter().chain([SETTINGS_TOGGLE_AUTO_UPDATE]) {
         if toggle_rect(id).contains(x, y) {
             toggle_setting(app, id);
             return;
         }
     }
-    if settings_microphone_rect().contains(x, y) {
+    if check_now_rect().contains(x, y) {
+        check_for_app_update(app, true);
+    } else if updates_detail_rect().contains(x, y) {
+        open_update_panel(app, WindowOrigin::Tray);
+    } else if settings_microphone_rect().contains(x, y) {
         unsafe { show_microphone_menu(app) };
     } else if settings_auto_stop_rect().contains(x, y) {
         unsafe { show_auto_stop_menu(app) };
@@ -260,6 +307,7 @@ pub(crate) fn draw_settings_tab_shapes(
     settings: &AppSettings,
     rows: &[SettingRow],
     view: &SettingsTabView,
+    update: &UpdateView,
     capturing: bool,
 ) {
     let view_h = SETTINGS_VIEW_BOTTOM - SETTINGS_VIEW_TOP;
@@ -281,6 +329,8 @@ pub(crate) fn draw_settings_tab_shapes(
         draw_button_bg(card, cw, view_h, settings_auto_stop_rect().shifted(dy), false);
         let picker = bubble_position_picker_rect().shifted(dy);
         draw_bubble_position_picker(card, cw, view_h, picker, settings.bubble_position, dy);
+        // Check now: the accent while the check runs, like the shortcut button while capturing.
+        draw_button_bg(card, cw, view_h, check_now_rect().shifted(dy), update.state.activity == UpdateActivity::Checking);
     }
     // scrollbar inside the card's padding, on the same line as the History tab's
     let content_h = SETTINGS_CONTENT_BOTTOM - SETTINGS_VIEW_TOP;
@@ -295,6 +345,7 @@ pub(crate) unsafe fn draw_settings_tab_text(
     settings: &AppSettings,
     rows: &[SettingRow],
     view: &SettingsTabView,
+    update: &UpdateView,
     capturing: bool,
 ) {
     let dy = -view.scroll;
@@ -358,6 +409,19 @@ pub(crate) unsafe fn draw_settings_tab_text(
     // bubble position: the detail names the position, the picker is drawn in pass 1
     let position = format!("{}.", settings.bubble_position.label());
     row_label(dc, BUBBLE_POSITION_ROW_TOP + dy, "Bubble position", &position);
+
+    // Updates: the state line (a link to the panel while a version is available) and Check now
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(233, 238, 244));
+    text_left(dc, "Updates", 40, UPDATES_ROW_TOP + 1 + dy, 200, 20);
+    let (detail, color) = updates_detail(update);
+    SelectObject(dc, small_font() as _);
+    SetTextColor(dc, rgb(color.0, color.1, color.2));
+    text_left_ellipsis(dc, &detail, updates_detail_rect().shifted(dy));
+    SelectObject(dc, ui_font() as _);
+    SetTextColor(dc, rgb(245, 248, 252));
+    let label = if update.state.activity == UpdateActivity::Checking { "Checking..." } else { "Check now" };
+    text_center(dc, label, check_now_rect().shifted(dy));
 
     SelectClipRgn(dc, null_mut());
 }
